@@ -4,7 +4,8 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "start": "start.bat",
+    "dev": "start.bat",
     "build": "vite build",
     "lint": "oxlint",
     "preview": "vite preview"

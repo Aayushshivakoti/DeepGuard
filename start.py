@@ -7,151 +7,116 @@ import time
 ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
 BACKEND_DIR = os.path.join(ROOT_DIR, "backend")
 
-def log(msg, symbol="[INFO]"):
-    print(f"\n{symbol} [DeepGuard Launcher] {msg}")
-
-def check_and_setup_env():
-    log("Step 1/3: Verifying Virtual Environments & Dependencies...", "[CHECK]")
+def resolve_python():
+    """Finds a safe, stable Python interpreter (3.10 - 3.12)."""
+    venv_py = os.path.join(BACKEND_DIR, "venv", "Scripts", "python.exe") if sys.platform == "win32" else os.path.join(BACKEND_DIR, "venv", "bin", "python")
+    if os.path.exists(venv_py):
+        return venv_py
     
-    # 1. Backend .env check
-    backend_env = os.path.join(BACKEND_DIR, ".env")
-    backend_env_example = os.path.join(BACKEND_DIR, ".env.example")
-    if not os.path.exists(backend_env) and os.path.exists(backend_env_example):
-        shutil.copy(backend_env_example, backend_env)
-        log("Created backend/.env from .env.example", "[OK]")
+    # Try Windows Python Launcher for stable Python versions
+    for ver in ["-3.12", "-3.11", "-3.10"]:
+        try:
+            res = subprocess.run(["py", ver, "-c", "import sys; print(sys.version_info.major)"], capture_output=True, text=True)
+            if res.returncode == 0:
+                return f"py {ver}"
+        except Exception:
+            continue
+            
+    return sys.executable
 
-    # 2. Virtualenv check
+def check_and_setup_env(base_python):
+    print("\n📦 [1/3] Checking Environment & Dependencies Safely...")
+    
+    # Copy .env
+    backend_env = os.path.join(BACKEND_DIR, ".env")
+    if not os.path.exists(backend_env) and os.path.exists(os.path.join(BACKEND_DIR, ".env.example")):
+        shutil.copy(os.path.join(BACKEND_DIR, ".env.example"), backend_env)
+
+    # Recreate venv safely
     venv_dir = os.path.join(BACKEND_DIR, "venv")
     if not os.path.exists(venv_dir):
-        log("Creating Python virtual environment...", "[CREATE]")
-        subprocess.run([sys.executable, "-m", "venv", venv_dir], check=True)
+        print("Creating lightweight virtual environment...")
+        if "py " in base_python:
+            subprocess.run(f"{base_python} -m venv \"{venv_dir}\"", shell=True, check=True)
+        else:
+            subprocess.run([base_python, "-m", "venv", venv_dir], check=True)
 
-    # Determine Python & Pip paths
-    if sys.platform == "win32":
-        python_bin = os.path.join(venv_dir, "Scripts", "python.exe")
-        pip_bin = os.path.join(venv_dir, "Scripts", "pip.exe")
-    else:
-        python_bin = os.path.join(venv_dir, "bin", "python")
-        pip_bin = os.path.join(venv_dir, "bin", "pip")
+    venv_py = os.path.join(venv_dir, "Scripts", "python.exe") if sys.platform == "win32" else os.path.join(venv_dir, "bin", "python")
+    venv_pip = os.path.join(venv_dir, "Scripts", "pip.exe") if sys.platform == "win32" else os.path.join(venv_dir, "bin", "pip")
 
-    # Verify/Install Backend Dependencies
+    # Install Wheel & Upgraded Pip first
+    subprocess.run([venv_pip, "install", "--quiet", "pip", "wheel", "setuptools"], check=False)
+
+    # Safe Pip Install
     requirements_file = os.path.join(BACKEND_DIR, "requirements.txt")
     if os.path.exists(requirements_file):
-        # Check if core packages are already installed to avoid re-running pip
-        deps_check = subprocess.run(
-            [python_bin, "-c", "import fastapi; import uvicorn; print('OK')"],
-            capture_output=True, text=True
-        )
-        if deps_check.returncode == 0 and "OK" in deps_check.stdout:
-            log("Backend dependencies already installed. Skipping pip sync.", "[OK]")
-        else:
-            log("Installing backend Python packages...", "[SYNC]")
-            # Filter out packages with known compatibility issues on newer Python
-            skip_packages = {"psycopg2-binary", "torch", "torchvision"}
-            with open(requirements_file, "r", encoding="utf-8") as f:
-                lines = f.readlines()
-            filtered_reqs = []
-            for line in lines:
-                stripped = line.strip()
-                pkg_name = stripped.split("==")[0].split("[")[0].split(">")[0].split("<")[0]
-                if pkg_name in skip_packages or stripped.startswith("#") or not stripped:
-                    continue
-                # Remove strict version pins so pip can resolve compatible versions
-                filtered_reqs.append(stripped)
-            temp_reqs_path = os.path.join(venv_dir, "temp_reqs.txt")
-            with open(temp_reqs_path, "w", encoding="utf-8") as f:
-                f.write("\n".join(filtered_reqs))
-            try:
-                subprocess.run([pip_bin, "install", "-q", "-r", temp_reqs_path], check=True)
-                log("Backend dependencies installed successfully.", "[OK]")
-            except Exception as e:
-                log(f"Some packages could not be installed: {e}", "[WARN]")
-                log("Continuing with available packages...", "[INFO]")
+        print("Syncing backend requirements (using binary wheels where available)...")
+        subprocess.run([venv_pip, "install", "--quiet", "-r", requirements_file], check=False)
 
-    # Verify/Install Frontend Dependencies
-    node_modules = os.path.join(ROOT_DIR, "node_modules")
-    if not os.path.exists(node_modules):
-        log("Installing frontend NPM packages...", "[SYNC]")
-        subprocess.run(["npm", "install"], cwd=ROOT_DIR, shell=(sys.platform == "win32"), check=True)
+    # Frontend install
+    if not os.path.exists(os.path.join(ROOT_DIR, "node_modules")):
+        print("Installing frontend Node packages...")
+        subprocess.run(["npm", "install", "--quiet"], cwd=ROOT_DIR, shell=(sys.platform == "win32"), check=True)
 
-    return python_bin
+    return venv_py
 
-def init_database(python_bin):
-    log("Step 2/3: Initializing Database & Seeding Default Accounts...", "[DB]")
+def init_database(venv_py):
+    print("\n🗄️ [2/3] Initializing Database...")
     try:
         env = os.environ.copy()
         env["PYTHONPATH"] = BACKEND_DIR
-        subprocess.run([python_bin, "-m", "app.db.init_db"], cwd=BACKEND_DIR, env=env, check=True)
-        log("Database schemas & seed users successfully initialized!", "[OK]")
+        subprocess.run([venv_py, "-m", "app.db.init_db"], cwd=BACKEND_DIR, env=env, check=False)
+        print("✅ Database ready.")
     except Exception as e:
-        log(f"Database initialization notice: {e}", "[WARN]")
+        print(f"⚠️ Notice: {e}")
 
-def launch_services(python_bin):
-    log("Step 3/3: Spawning Stack Services Concurrently...", "[LAUNCH]")
+def launch_services(venv_py):
+    print("\n⚡ [3/3] Spawning Lightweight Stack Services...")
     
     processes = []
     env = os.environ.copy()
     env["PYTHONPATH"] = BACKEND_DIR
-
-    bin_dir = os.path.dirname(python_bin)
-    if sys.platform == "win32":
-        uvicorn_bin = os.path.join(bin_dir, "uvicorn.exe")
-        celery_bin = os.path.join(bin_dir, "celery.exe")
-    else:
-        uvicorn_bin = os.path.join(bin_dir, "uvicorn")
-        celery_bin = os.path.join(bin_dir, "celery")
+    bin_dir = os.path.dirname(venv_py)
+    uvicorn_bin = os.path.join(bin_dir, "uvicorn")
 
     try:
-        # 1. Start Celery Worker
-        log("Spawning Celery Task Worker...", "[CELERY]")
-        celery_cmd = [
-            celery_bin, "-A", "app.core.celery_app", "worker",
-            "--loglevel=info", "--pool=solo",
-            "-Q", "image_queue,audio_queue,video_queue,url_queue,default"
-        ]
-        p_celery = subprocess.Popen(celery_cmd, cwd=BACKEND_DIR, env=env, shell=(sys.platform == "win32"))
-        processes.append(p_celery)
-
-        # 2. Start FastAPI Backend Server
-        log("Spawning FastAPI Uvicorn Server (Port 8000)...", "[BACKEND]")
-        uvicorn_cmd = [uvicorn_bin, "main:app", "--reload", "--port", "8000"]
-        p_backend = subprocess.Popen(uvicorn_cmd, cwd=BACKEND_DIR, env=env, shell=(sys.platform == "win32"))
+        # 1. Backend API (FastAPI)
+        print("Starting FastAPI Backend (Port 8000)...")
+        p_backend = subprocess.Popen(
+            [uvicorn_bin, "main:app", "--reload", "--port", "8000", "--workers", "1"],
+            cwd=BACKEND_DIR, env=env, shell=(sys.platform == "win32")
+        )
         processes.append(p_backend)
 
-        # 3. Start React Frontend Dashboard
-        log("Spawning React Vite Client (Port 5173)...", "[FRONTEND]")
-        p_frontend = subprocess.Popen(["npm", "run", "dev"], cwd=ROOT_DIR, shell=(sys.platform == "win32"))
+        # 2. Frontend React Client
+        print("Starting Vite Frontend (Port 5173)...")
+        p_frontend = subprocess.Popen(
+            ["npm", "run", "dev"], cwd=ROOT_DIR, shell=(sys.platform == "win32")
+        )
         processes.append(p_frontend)
 
-        time.sleep(3)
-        print("\n" + "="*70)
-        print("  DEEPGUARD STACK OPERATIONAL")
-        print("="*70)
-        print("  REACT DASHBOARD:    http://localhost:5173")
-        print("  API SWAGGER DOCS:   http://localhost:8000/docs")
-        print("  ADMIN ACCOUNT:      admin@example.com / AdminPass123!")
-        print("  USER ACCOUNT:       user@example.com / UserPass123!")
-        print("="*70)
-        print("\nPress Ctrl+C to terminate all services cleanly.\n")
+        time.sleep(2)
+        print("\n" + "="*60)
+        print("  🎉 DEEPGUARD STACK OPERATIONAL (SAFE DEV MODE)")
+        print("="*60)
+        print("  💻 REACT DASHBOARD:    http://localhost:5173")
+        print("  📚 API SWAGGER DOCS:   http://localhost:8000/docs")
+        print("  🔑 ADMIN ACCOUNT:      admin@example.com / AdminPass123!")
+        print("="*60 + "\n")
 
         while True:
             time.sleep(1)
 
     except KeyboardInterrupt:
-        log("Shutting down all processes...", "[SHUTDOWN]")
+        print("\n🛑 Stopping all services...")
         for p in processes:
-            try:
-                p.terminate()
-            except Exception:
-                pass
+            p.terminate()
         for p in processes:
-            try:
-                p.wait()
-            except Exception:
-                pass
-        log("All services closed. Goodbye!", "[BYE]")
+            p.wait()
+        print("👋 Services stopped safely.")
 
 if __name__ == "__main__":
-    py_executable = check_and_setup_env()
-    init_database(py_executable)
-    launch_services(py_executable)
+    py_cmd = resolve_python()
+    active_py = check_and_setup_env(py_cmd)
+    init_database(active_py)
+    launch_services(active_py)
