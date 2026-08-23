@@ -1,0 +1,43 @@
+replicaCount: 3
+
+image:
+  repository: ghcr.io/aayushshivakoti/deepguard/gateway
+  pullPolicy: IfNotPresent
+  tag: "latest"
+
+service:
+  type: ClusterIP
+  port: 80
+
+ingress:
+  enabled: true
+  className: "nginx"
+  annotations:
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+  hosts:
+    - host: gateway.deepguard.live
+      paths:
+        - path: /
+          pathType: Prefix
+
+resources:
+  limits:
+    cpu: 2000m
+    memory: 4Gi
+  requests:
+    cpu: 500m
+    memory: 1Gi
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 80
+
+env:
+  APP_ENV: "production"
+  DEBUG: "false"
+  USE_MOCK_MODELS: "true"
+  DATABASE_URL: "postgresql+asyncpg://postgres:change-in-prod@postgres-postgresql:5432/deepguard"
+  REDIS_URL: "redis://redis-master:6379/0"

@@ -1,0 +1,261 @@
+"""
+app/ml_models/vision_model.py
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+EfficientNet-B4 Deepfake Vision Classifier
+
+Loads a fine-tuned EfficientNet-B4 with a 2-class classification head
+(authentic vs deepfake). Supports:
+  - PyTorch .pt weight loading
+  - ONNX Runtime acceleration via onnx_wrapper
+  - Grad-CAM heatmap generation over target conv layers
+  - Graceful fallback to heuristic scoring when USE_MOCK_MODELS=true
+"""
+from __future__ import annotations
+
+import io
+import os
+from typing import Dict, Any, Optional, Tuple
+
+import numpy as np
+import structlog
+from PIL import Image
+
+from app.core.config import settings
+
+log = structlog.get_logger(__name__)
+
+# Image preprocessing constants (ImageNet normalization)
+IMAGENET_MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)
+IMAGENET_STD = np.array([0.229, 0.224, 0.225], dtype=np.float32)
+INPUT_SIZE = 380  # EfficientNet-B4 optimal input resolution
+
+
+def preprocess_image(pil_image: Image.Image) -> np.ndarray:
+    """
+    Preprocess a PIL Image for EfficientNet-B4 inference.
+
+    Returns:
+        np.ndarray shaped (1, 3, 380, 380) in float32 with ImageNet normalization.
+    """
+    img = pil_image.convert("RGB").resize((INPUT_SIZE, INPUT_SIZE), Image.BICUBIC)
+    arr = np.array(img, dtype=np.float32) / 255.0
+    # Normalize with ImageNet stats
+    arr = (arr - IMAGENET_MEAN) / IMAGENET_STD
+    # HWC → CHW, add batch dim
+    arr = arr.transpose(2, 0, 1)[np.newaxis, ...]
+    return arr
+
+
+class DeepfakeVisionModel:
+    """
+    Production EfficientNet-B4 deepfake classifier with Grad-CAM support.
+
+    When USE_MOCK_MODELS=true (default), uses heuristic FFT-based scoring.
+    When false, loads real PyTorch weights or ONNX session.
+    """
+
+    def __init__(self):
+        self.model = None
+        self.onnx_session = None
+        self.device = settings.MODEL_DEVICE
+        self.use_mock = settings.USE_MOCK_MODELS
+        self._target_layer = None  # For Grad-CAM
+
+        if not self.use_mock:
+            self._load_model()
+
+    def _load_model(self):
+        """Load PyTorch EfficientNet-B4 or ONNX session."""
+        weight_path = settings.SPATIAL_MODEL_PATH
+        onnx_path = weight_path.replace(".pt", ".onnx")
+
+        # Try ONNX first (faster inference)
+        if os.path.exists(onnx_path):
+            try:
+                from app.services.onnx_wrapper import ONNXModelWrapper
+                self.onnx_session = ONNXModelWrapper(onnx_path)
+                log.info("vision_model.onnx_loaded", path=onnx_path)
+                return
+            except Exception as e:
+                log.warning("vision_model.onnx_fallback", error=str(e))
+
+        # Fallback to PyTorch
+        if os.path.exists(weight_path):
+            try:
+                import torch
+                import torchvision.models as models
+
+                self.model = models.efficientnet_b4(weights=None)
+                # Replace classifier head for 2-class output
+                in_features = self.model.classifier[1].in_features
+                self.model.classifier = torch.nn.Sequential(
+                    torch.nn.Dropout(p=0.4, inplace=True),
+                    torch.nn.Linear(in_features, 2),
+                )
+                state_dict = torch.load(weight_path, map_location=self.device, weights_only=True)
+                self.model.load_state_dict(state_dict, strict=False)
+                self.model.to(self.device)
+                self.model.eval()
+
+                # Store target layer for Grad-CAM
+                self._target_layer = self.model.features[-1]
+
+                log.info("vision_model.pytorch_loaded", path=weight_path, device=self.device)
+            except Exception as e:
+                log.error("vision_model.load_failed", error=str(e))
+                self.use_mock = True
+        else:
+            log.warning("vision_model.weights_not_found", path=weight_path)
+            self.use_mock = True
+
+    def predict(self, image_buffer: bytes) -> Tuple[float, np.ndarray]:
+        """
+        Run deepfake classification on raw image bytes.
+
+        Returns:
+            (deepfake_probability, logits) where probability is 0-100 scale.
+        """
+        pil_image = Image.open(io.BytesIO(image_buffer)).convert("RGB")
+        input_tensor = preprocess_image(pil_image)
+
+        if self.use_mock:
+            return self._mock_predict(image_buffer)
+
+        # ONNX inference
+        if self.onnx_session and self.onnx_session.session:
+            logits = self.onnx_session.run_inference(input_tensor)
+            return self._logits_to_probability(logits)
+
+        # PyTorch inference
+        if self.model is not None:
+            import torch
+            with torch.no_grad():
+                tensor = torch.from_numpy(input_tensor).to(self.device)
+                logits = self.model(tensor).cpu().numpy()
+            return self._logits_to_probability(logits)
+
+        return self._mock_predict(image_buffer)
+
+    def generate_gradcam(self, image_buffer: bytes) -> Optional[str]:
+        """
+        Generate Grad-CAM heatmap overlay as base64 PNG.
+
+        Returns None if model is in mock mode or Grad-CAM generation fails.
+        """
+        if self.use_mock or self.model is None or self._target_layer is None:
+            return None
+
+        try:
+            import torch
+            import base64
+
+            pil_image = Image.open(io.BytesIO(image_buffer)).convert("RGB")
+            input_tensor = preprocess_image(pil_image)
+            tensor = torch.from_numpy(input_tensor).to(self.device)
+            tensor.requires_grad_(True)
+
+            # Forward pass with gradient tracking
+            activations = {}
+            gradients = {}
+
+            def forward_hook(module, inp, out):
+                activations["value"] = out.detach()
+
+            def backward_hook(module, grad_in, grad_out):
+                gradients["value"] = grad_out[0].detach()
+
+            fwd_handle = self._target_layer.register_forward_hook(forward_hook)
+            bwd_handle = self._target_layer.register_full_backward_hook(backward_hook)
+
+            output = self.model(tensor)
+            # Backprop on deepfake class (index 1)
+            self.model.zero_grad()
+            output[0, 1].backward()
+
+            fwd_handle.remove()
+            bwd_handle.remove()
+
+            # Compute Grad-CAM
+            act = activations["value"].squeeze(0)  # (C, H, W)
+            grad = gradients["value"].squeeze(0)    # (C, H, W)
+            weights = grad.mean(dim=(1, 2))         # (C,)
+            cam = (weights[:, None, None] * act).sum(dim=0)  # (H, W)
+            cam = torch.relu(cam)
+            cam = cam / (cam.max() + 1e-8)
+            cam_np = cam.cpu().numpy()
+
+            # Resize to original image size and create heatmap
+            from scipy.ndimage import zoom
+            orig_size = pil_image.size  # (W, H)
+            scale_h = orig_size[1] / cam_np.shape[0]
+            scale_w = orig_size[0] / cam_np.shape[1]
+            cam_resized = zoom(cam_np, (scale_h, scale_w), order=1)
+            cam_resized = np.clip(cam_resized, 0, 1)
+
+            # Apply colormap (red-hot)
+            heatmap = np.zeros((*cam_resized.shape, 4), dtype=np.uint8)
+            heatmap[..., 0] = (cam_resized * 255).astype(np.uint8)  # Red
+            heatmap[..., 1] = ((1 - cam_resized) * 50).astype(np.uint8)  # Slight green
+            heatmap[..., 3] = (cam_resized * 180).astype(np.uint8)  # Alpha
+
+            heatmap_img = Image.fromarray(heatmap, "RGBA")
+            buf = io.BytesIO()
+            heatmap_img.save(buf, format="PNG")
+            return base64.b64encode(buf.getvalue()).decode("utf-8")
+
+        except Exception as e:
+            log.warning("vision_model.gradcam_failed", error=str(e))
+            return None
+
+    def _logits_to_probability(self, logits: np.ndarray) -> Tuple[float, np.ndarray]:
+        """Convert raw logits to deepfake probability (0-100)."""
+        from scipy.special import softmax
+        probs = softmax(logits[0])
+        deepfake_prob = float(probs[1]) * 100.0  # Index 1 = deepfake class
+        return deepfake_prob, logits
+
+    def _mock_predict(self, image_buffer: bytes) -> Tuple[float, np.ndarray]:
+        """
+        Heuristic FFT-based mock prediction for development.
+        Analyzes high-frequency energy ratio as a proxy for GAN artifacts.
+        """
+        try:
+            pil_image = Image.open(io.BytesIO(image_buffer)).convert("L")
+            img_arr = np.array(pil_image.resize((256, 256)), dtype=np.float32)
+
+            # 2D FFT spectral analysis
+            fft = np.fft.fft2(img_arr)
+            fft_shifted = np.fft.fftshift(fft)
+            magnitude = np.abs(fft_shifted)
+
+            h, w = magnitude.shape
+            cy, cx = h // 2, w // 2
+            radius = min(h, w) // 4
+
+            # High-frequency energy ratio
+            total_energy = magnitude.sum() + 1e-8
+            mask = np.zeros_like(magnitude, dtype=bool)
+            y, x = np.ogrid[:h, :w]
+            mask[(y - cy) ** 2 + (x - cx) ** 2 > radius ** 2] = True
+            high_freq_energy = magnitude[mask].sum()
+            hf_ratio = high_freq_energy / total_energy
+
+            # Map to deepfake probability
+            score = float(np.clip(hf_ratio * 200, 5, 95))
+            return score, np.array([[100 - score, score]], dtype=np.float32)
+
+        except Exception as e:
+            log.warning("vision_model.mock_predict_failed", error=str(e))
+            return 50.0, np.array([[50.0, 50.0]], dtype=np.float32)
+
+    def get_model_info(self) -> Dict[str, Any]:
+        """Return model metadata for API responses."""
+        return {
+            "model_name": "EfficientNet-B4",
+            "model_type": "vision_deepfake_classifier",
+            "input_size": INPUT_SIZE,
+            "num_classes": 2,
+            "device": self.device,
+            "is_mock": self.use_mock,
+            "backend": "onnx" if self.onnx_session else ("pytorch" if self.model else "heuristic"),
+        }

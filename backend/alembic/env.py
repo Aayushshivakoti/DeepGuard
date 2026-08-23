@@ -14,9 +14,14 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 
 # Import Base and all models for auto-detection
 from app.db.base import Base  # noqa: F401
-import app.db.models.user      # noqa: F401
-import app.db.models.scan_result  # noqa: F401
-import app.db.models.audit_log    # noqa: F401
+import app.db.models.user           # noqa: F401
+import app.db.models.scan_result    # noqa: F401
+import app.db.models.scan_record    # noqa: F401
+import app.db.models.audit_log      # noqa: F401
+import app.db.models.team           # noqa: F401
+import app.db.models.scheduled_monitor  # noqa: F401
+import app.db.models.refresh_token       # noqa: F401
+import app.db.models.webauthn_credential # noqa: F401
 
 config = context.config
 fileConfig(config.config_file_name)

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Settings, Key, Shield, Sliders, Eye, EyeOff, Save, CheckCircle2 } from 'lucide-react';
+import { Settings, Key, Shield, Sliders, Eye, EyeOff, Save, CheckCircle2, Database, ShieldCheck } from 'lucide-react';
 
 function ApiKeyInput({ id, label, placeholder }) {
   const [show, setShow] = useState(false);
@@ -70,6 +70,10 @@ export default function SystemSettings() {
     confidenceMin: 30,
   });
   const [saved, setSaved] = useState(false);
+
+  // Multi-Tenant Isolation & Logging States
+  const [auditLogging, setAuditLogging] = useState(true);
+  const [tenantIsolation, setTenantIsolation] = useState(true);
 
   const handleSave = () => {
     setSaved(true);
@@ -171,6 +175,69 @@ export default function SystemSettings() {
               label="OpenAI API Key (GPT Explanation Layer)"
               placeholder="sk-••••••••••••••••••••••••••••"
             />
+          </div>
+        </div>
+
+        {/* Concentric API Quota usage gauge & Toggles */}
+        <hr className="border-slate-800" />
+        <div className="space-y-4">
+          <div className="flex items-center gap-2">
+            <Database size={14} className="text-cyan-400 animate-pulse" />
+            <p className="text-sm font-semibold text-slate-200">Organization Multi-Tenancy & Quota</p>
+          </div>
+
+          {/* Active API Quota Concentric Gauge */}
+          <div className="flex items-center gap-4 bg-slate-950/40 p-4 rounded-xl border border-slate-900">
+            <div className="relative w-14 h-14 flex items-center justify-center flex-shrink-0">
+              <svg className="w-full h-full transform -rotate-90">
+                <circle cx="28" cy="28" r="24" stroke="#1e293b" strokeWidth="4" fill="transparent" />
+                <circle
+                  cx="28"
+                  cy="28"
+                  r="24"
+                  stroke="#06b6d4"
+                  strokeWidth="4"
+                  fill="transparent"
+                  strokeDasharray="150"
+                  strokeDashoffset="33" 
+                  className="transition-all duration-1000 ease-out"
+                />
+              </svg>
+              <span className="absolute text-[10px] font-black text-white font-mono">78%</span>
+            </div>
+            <div>
+              <p className="text-xs font-bold text-slate-300">Daily API Scan Quota consumed</p>
+              <p className="text-[10px] text-slate-500 font-mono mt-0.5">7,842 / 10,000 queries remaining</p>
+            </div>
+          </div>
+
+          {/* Toggles */}
+          <div className="space-y-3">
+            <label className="flex items-center gap-2.5 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={auditLogging}
+                onChange={() => setAuditLogging(!auditLogging)}
+                className="rounded border-slate-800 bg-slate-950 text-cyan-500 focus:ring-0 focus:ring-offset-0 w-4 h-4"
+              />
+              <div className="text-xs">
+                <p className="font-bold text-slate-300">Enable Organization Audit Logging</p>
+                <p className="text-[10px] text-slate-500">Log all API calls and metadata mutations internally for audits.</p>
+              </div>
+            </label>
+
+            <label className="flex items-center gap-2.5 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={tenantIsolation}
+                onChange={() => setTenantIsolation(!tenantIsolation)}
+                className="rounded border-slate-800 bg-slate-950 text-cyan-500 focus:ring-0 focus:ring-offset-0 w-4 h-4"
+              />
+              <div className="text-xs">
+                <p className="font-bold text-slate-300">Forced Cryptographic Tenant Data Isolation</p>
+                <p className="text-[10px] text-slate-500">Encrypt scan histories with org-specific workspace keys.</p>
+              </div>
+            </label>
           </div>
         </div>
 

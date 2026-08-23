@@ -363,4 +363,51 @@ export async function googleSsoLogin(payload = {}) {
   return response.data;
 }
 
+// ─── Team Management ──────────────────────────────────────────────────────────
+export async function getTeams() {
+  const response = await api.get('/teams');
+  return response.data;
+}
+
+export async function createTeam(name, orgName = '') {
+  const response = await api.post('/teams', { name, org_name: orgName });
+  return response.data;
+}
+
+export async function getTeamMembers(teamId) {
+  const response = await api.get(`/teams/${teamId}/members`);
+  return response.data;
+}
+
+export async function addTeamMember(teamId, email, role = 'MEMBER') {
+  const response = await api.post(`/teams/${teamId}/members`, { email, role });
+  return response.data;
+}
+
+export async function removeTeamMember(teamId, userId) {
+  const response = await api.delete(`/teams/${teamId}/members/${userId}`);
+  return response.data;
+}
+
+// ─── Password Reset & Email Verification ──────────────────────────────────────
+export async function requestPasswordReset(email) {
+  const response = await api.post('/auth/password-reset/request', { email });
+  return response.data;
+}
+
+export async function confirmPasswordReset(token, newPassword) {
+  const response = await api.post('/auth/password-reset/confirm', { token, new_password: newPassword });
+  return response.data;
+}
+
+export async function requestEmailVerification() {
+  const response = await api.post('/auth/email-verification/request');
+  return response.data;
+}
+
+export async function verifyEmail(token) {
+  const response = await api.post('/auth/email-verification/verify', { token });
+  return response.data;
+}
+
 export { MOCK_ADMIN_METRICS, MOCK_ALERT_FEED };

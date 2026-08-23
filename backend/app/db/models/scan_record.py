@@ -29,6 +29,9 @@ class ScanRecord(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False, index=True
     )
+    deleted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, default=None
+    )
 
     def __repr__(self) -> str:
         return f"<ScanRecord id={self.id} verdict={self.verdict} confidence_score={self.confidence_score:.1f}%>"

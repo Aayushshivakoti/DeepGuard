@@ -25,7 +25,12 @@ class Settings(BaseSettings):
     # ── Security ───────────────────────────────────────────────────────────────
     SECRET_KEY: str = "insecure-dev-secret-change-in-production"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
+    REFRESH_TOKEN_EXPIRE_DAYS: int = 30
     JWT_ALGORITHM: str = "HS256"
+
+    # ── Password Policy ────────────────────────────────────────────────────────
+    PASSWORD_MIN_LENGTH: int = 8
+    PASSWORD_REQUIRE_COMPLEXITY: bool = True
 
     # ── Database ───────────────────────────────────────────────────────────────
     DATABASE_URL: str = "sqlite+aiosqlite:///./deepguard_db.sqlite"
@@ -43,7 +48,8 @@ class Settings(BaseSettings):
         "image/jpeg,image/png,image/webp,"
         "audio/wav,audio/mpeg,audio/mp4,"
         "video/mp4,video/quicktime,"
-        "application/pdf"
+        "application/pdf,"
+        "message/rfc822"
     )
 
     @property
@@ -54,7 +60,9 @@ class Settings(BaseSettings):
     MODEL_DEVICE: str = "cpu"
     SPATIAL_MODEL_PATH: str = "weights/efficientnet_b4_deepfake.pt"
     AUDIO_MODEL_PATH: str = "weights/voice_clone_detector.pt"
+    TEXT_MODEL_PATH: str = "gpt2"
     USE_MOCK_MODELS: bool = True
+    ONNX_QUANTIZATION_MODE: str = "none"  # none | fp16 | int8
 
     # ── Third-Party APIs ──────────────────────────────────────────────────────
     VIRUSTOTAL_API_KEY: str = ""
@@ -63,9 +71,24 @@ class Settings(BaseSettings):
     # ── OAuth & WebAuthn SSO ──────────────────────────────────────────────────
     GOOGLE_CLIENT_ID: str = ""
     GOOGLE_CLIENT_SECRET: str = ""
+    GITHUB_CLIENT_ID: str = ""
+    GITHUB_CLIENT_SECRET: str = ""
+    MICROSOFT_CLIENT_ID: str = ""
+    MICROSOFT_CLIENT_SECRET: str = ""
     WEBAUTHN_RP_ID: str = "localhost"
     WEBAUTHN_RP_NAME: str = "DeepGuard Gateway"
     WEBAUTHN_ORIGIN: str = "http://localhost:5173"
+
+    # ── HMAC Secrets (for SIEM & Webhook signatures) ──────────────────────────
+    SIEM_HMAC_SECRET: str = "DeepGuard-SIEM-HMAC-change-in-production"
+    WEBHOOK_HMAC_SECRET: str = "DeepGuard-Webhook-Secret-change-in-production"
+
+    # ── S3 / MinIO Object Storage ─────────────────────────────────────────────
+    S3_ENDPOINT: str = ""
+    S3_BUCKET: str = "deepguard-uploads"
+    S3_ACCESS_KEY: str = ""
+    S3_SECRET_KEY: str = ""
+    S3_REGION: str = "us-east-1"
 
     # ── CORS ──────────────────────────────────────────────────────────────────
     CORS_ORIGINS: str = "http://localhost:5173,http://localhost:3000,http://localhost:4173"

@@ -3,6 +3,7 @@ app/api/v1/scan.py — Scan Endpoints
 
 POST /api/v1/scan/file   — Multi-part file upload; routes to orchestrator
 POST /api/v1/scan/url    — JSON URL scan
+POST /api/v1/scan/batch  — Batch ZIP file upload; unzips and scans in parallel
 GET  /api/v1/scan/history — Paginated scan history from DB
 """
 from __future__ import annotations
@@ -12,6 +13,8 @@ import hashlib
 import mimetypes
 import time
 import uuid
+import zipfile
+import io
 from datetime import datetime, timezone
 from typing import List, Optional
 
@@ -27,10 +30,11 @@ from fastapi import (
     Request,
     UploadFile,
     status,
+    Header,
 )
 from fastapi.responses import ORJSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, desc, func
+from sqlalchemy import select, desc, func, and_
 
 from app.core.config import settings
 from app.core.security import verify_hmac_signature
@@ -39,13 +43,15 @@ from app.db.models.scan_result import ScanResult
 from app.db.models.scan_record import ScanRecord
 from app.db.models.user import User
 from app.db.session import get_db
-from app.api.deps import get_optional_current_user
+from app.api.deps import get_optional_current_user, get_current_user
 from app.schemas.scan import (
     ScanHistoryItem,
     UrlScanRequest,
     VerificationResponse,
+    ForensicFlag,
 )
 from app.services.orchestrator import dispatch_file_scan, dispatch_url_scan
+from app.middleware.quota_manager import check_user_quota, increment_scan_count, get_quota_headers
 
 log = structlog.get_logger(__name__)
 
@@ -138,6 +144,34 @@ async def _log_audit(
     await db.commit()
 
 
+# ─── API Key Authentication Helper ───────────────────────────────────────────
+
+async def verify_api_key(
+    x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
+    db: AsyncSession = Depends(get_db),
+) -> Optional[User]:
+    """
+    Validate custom X-API-Key header.
+    Returns the User if valid, raises 401 if invalid/inactive.
+    """
+    if not x_api_key:
+        return None
+
+    # For dev simplicity, check against configured master key or look up in DB
+    # (can extend users table with api_key column if needed; for now, enforce master token)
+    configured_key = getattr(settings, "DEEPGUARD_API_KEY", "deepguard-api-key-secret")
+    if x_api_key == configured_key:
+        # Return a mock system/admin user
+        result = await db.execute(select(User).where(User.role == "ADMIN").limit(1))
+        admin_user = result.scalar_one_or_none()
+        return admin_user
+
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Invalid or deactivated API Key.",
+    )
+
+
 # ─── POST /scan/file ──────────────────────────────────────────────────────────
 
 @router.post(
@@ -146,8 +180,7 @@ async def _log_audit(
     summary="Scan a media file for deepfakes or phishing",
     description=(
         "Upload an image, audio, video, or PDF file. "
-        "The engine auto-detects the media type and runs the appropriate AI pipeline. "
-        "Returns a forensic verdict with confidence score and optional Grad-CAM heatmap."
+        "The engine auto-detects the media type and runs the appropriate AI pipeline."
     ),
     status_code=status.HTTP_200_OK,
 )
@@ -158,7 +191,21 @@ async def scan_file(
     media_type: Optional[str] = Form(None, description="Override media type detection"),
     db: AsyncSession = Depends(get_db),
     current_user: Optional[User] = Depends(get_optional_current_user),
+    api_user: Optional[User] = Depends(verify_api_key),
 ) -> VerificationResponse:
+
+    # Enforce API key or JWT user
+    active_user = api_user or current_user
+    user_id = active_user.id if active_user else None
+
+    # Quota check
+    if active_user:
+        quota = await check_user_quota(str(active_user.id), active_user.tier, active_user.role)
+        if not quota["allowed"]:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail=f"Daily scan quota exceeded for tier '{quota['tier']}'. Limit: {quota['daily_limit']}.",
+            )
 
     # ── Validation ────────────────────────────────────────────────────────────
     if not file.filename:
@@ -168,8 +215,7 @@ async def scan_file(
     if mime not in settings.allowed_mime_set:
         raise HTTPException(
             status_code=415,
-            detail=f"Unsupported media type '{mime}'. "
-                   f"Allowed: {', '.join(sorted(settings.allowed_mime_set))}",
+            detail=f"Unsupported media type '{mime}'. Allowed: {', '.join(sorted(settings.allowed_mime_set))}",
         )
 
     # ── Stream buffer (prevents memory bloat on large files) ──────────────────
@@ -200,6 +246,13 @@ async def scan_file(
         hash=file_hash,
     )
 
+    # ── File Magic Byte Validation ───────────────────────────────────────────
+    from app.middleware.security_middleware import validate_file_magic_bytes
+    try:
+        validate_file_magic_bytes(buffer, mime)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
     # ── PDF Script Sanitization ───────────────────────────────────────────────
     if mime == "application/pdf":
         try:
@@ -209,15 +262,15 @@ async def scan_file(
             raise HTTPException(status_code=400, detail=str(exc))
 
     # ── Deduplication / Caching Check ─────────────────────────────────────────
-    stmt = select(ScanRecord).where(ScanRecord.file_hash == file_hash).order_by(desc(ScanRecord.created_at)).limit(1)
+    stmt = select(ScanRecord).where(
+        and_(ScanRecord.file_hash == file_hash, ScanRecord.deleted_at.is_(None))
+    ).order_by(desc(ScanRecord.created_at)).limit(1)
     cache_res = await db.execute(stmt)
     cached_record = cache_res.scalar_one_or_none()
     if cached_record:
         log.info("scan_file.cache_hit", file_hash=file_hash)
         details = cached_record.details or {}
         
-        # Safe ForensicFlag mapping
-        from app.schemas.scan import ForensicFlag
         flags_list = []
         for f in details.get("forensic_flags", []):
             try:
@@ -232,7 +285,10 @@ async def scan_file(
         }
         resp_verdict = verdict_map_rev.get(cached_record.verdict, "DEEPFAKE_DETECTED")
 
-        # Log audit log (background)
+        # Quota increment
+        if active_user:
+            await increment_scan_count(str(active_user.id))
+
         background_tasks.add_task(
             _log_audit, db, "SCAN_FILE_CACHE", str(cached_record.id), request,
             {"filename": file.filename, "verdict": resp_verdict, "confidence": cached_record.confidence_score},
@@ -266,7 +322,7 @@ async def scan_file(
         if not hmac_verified:
             raise HTTPException(status_code=403, detail="Invalid cryptographic HMAC signature.")
 
-    # ── Async Celery Task Route for heavy files / video / audio ───────────────
+    # ── Async Celery Task Route for heavy files ───────────────────────────────
     is_heavy = total_size > 10 * 1024 * 1024
     is_video_or_audio = mime.startswith(("video/", "audio/"))
     
@@ -276,17 +332,15 @@ async def scan_file(
     if (is_heavy or is_video_or_audio) and not is_testing:
         try:
             from app.core.celery_app import celery_app
-            # Verify Redis / Celery connection before async queuing
             with celery_app.connection_or_acquire(timeout=1.0) as conn:
                 conn.ensure_connection(max_retries=1)
 
             job_id = str(uuid.uuid4())
             buffer_b64 = base64.b64encode(buffer).decode("utf-8")
             
-            # Save a PENDING ScanRecord
             scan_rec = ScanRecord(
                 id=uuid.UUID(job_id),
-                user_id=current_user.id if current_user else None,
+                user_id=user_id,
                 filename=file.filename,
                 file_hash=file_hash,
                 media_type="video" if mime.startswith("video/") else ("audio" if mime.startswith("audio/") else "image"),
@@ -295,17 +349,19 @@ async def scan_file(
                 details={"status": "PENDING", "progress": 10},
             )
             
-            # Try to dispatch Celery task based on mime type
             from app.services.celery_tasks import scan_video_task, scan_audio_task, scan_image_task
             if mime.startswith("video/"):
                 scan_video_task.apply_async(args=[buffer_b64, file.filename, mime], task_id=job_id, retry=False)
             elif mime.startswith("audio/"):
-                scan_audio_task.apply_async(args=[buffer_b64, file.filename, mime], task_id=job_id, retry=False)
+                scan_audio_task.apply_async(args=[buffer_b64, file.filename, mime, ext], task_id=job_id, retry=False)
             else:
                 scan_image_task.apply_async(args=[buffer_b64, file.filename, mime], task_id=job_id, retry=False)
                 
             db.add(scan_rec)
             await db.commit()
+
+            if active_user:
+                await increment_scan_count(str(active_user.id))
 
             background_tasks.add_task(
                 _log_audit, db, "SCAN_FILE_ASYNC", job_id, request,
@@ -326,9 +382,8 @@ async def scan_file(
             )
         except Exception as exc:
             log.warning("scan_file.celery_broker_offline_fallback_sync", error=str(exc))
-            # Fall through to synchronous path if Celery broker is offline (e.g. local dev mode)
 
-    # ── Engine Dispatch (Synchronous path for light files) ────────────────────
+    # ── Engine Dispatch (Synchronous path) ────────────────────────────────────
     try:
         response = await dispatch_file_scan(
             buffer=buffer,
@@ -343,24 +398,105 @@ async def scan_file(
         raise HTTPException(status_code=422, detail=str(exc))
     except Exception as exc:
         log.error("scan_file.engine_error", error=str(exc))
-        raise HTTPException(status_code=500, detail="Analysis engine error. Please try again.")
+        raise HTTPException(status_code=500, detail="Analysis engine error.")
 
-    # ── Persist & Audit (background) ──────────────────────────────────────────
-    background_tasks.add_task(_persist_scan_result, db, response, current_user.id if current_user else None, file_hash)
+    # Quota increment
+    if active_user:
+        await increment_scan_count(str(active_user.id))
+
+    background_tasks.add_task(_persist_scan_result, db, response, user_id, file_hash)
     background_tasks.add_task(
         _log_audit, db, "SCAN_FILE", response.id, request,
         {"filename": file.filename, "verdict": response.verdict, "confidence": response.confidence},
     )
 
-    log.info(
-        "scan_file.complete",
-        id=response.id,
-        verdict=response.verdict,
-        confidence=response.confidence,
-        ms=response.processing_time_ms,
+    return response
+
+
+# ─── POST /scan/batch — ZIP Batch Scanning ────────────────────────────────────
+
+@router.post(
+    "/batch",
+    response_model=List[VerificationResponse],
+    summary="Scan a batch of media files inside a ZIP archive",
+    status_code=status.HTTP_200_OK,
+)
+async def scan_batch_zip(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(..., description="ZIP archive containing media files"),
+    db: AsyncSession = Depends(get_db),
+    current_user: Optional[User] = Depends(get_optional_current_user),
+    api_user: Optional[User] = Depends(verify_api_key),
+):
+    """
+    Extracts and scans all supported media files inside an uploaded ZIP file.
+    Runs each file scan sequentially/concurrently and returns a list of results.
+    """
+    active_user = api_user or current_user
+    user_id = active_user.id if active_user else None
+
+    # Check zip extension
+    if not file.filename or not file.filename.endswith(".zip"):
+        raise HTTPException(status_code=400, detail="Uploaded file must be a valid ZIP archive.")
+
+    zip_bytes = await file.read()
+    results = []
+
+    try:
+        with zipfile.ZipFile(io.BytesIO(zip_bytes)) as z:
+            for zip_info in z.infolist():
+                # Skip directories
+                if zip_info.is_dir():
+                    continue
+
+                filename = zip_info.filename
+                # Skip hidden files/macOS resource forks
+                if filename.startswith("__MACOSX/") or "/." in filename or filename.startswith("."):
+                    continue
+
+                mime, _ = mimetypes.guess_type(filename)
+                if not mime or mime not in settings.allowed_mime_set:
+                    continue
+
+                # Read file bytes
+                file_data = z.read(zip_info.filename)
+                
+                # Enforce size limits per file
+                if len(file_data) > MAX_UPLOAD_BYTES:
+                    log.warning("scan_batch.file_too_large", filename=filename)
+                    continue
+
+                # Quota check per file
+                if active_user:
+                    quota = await check_user_quota(str(active_user.id), active_user.tier, active_user.role)
+                    if not quota["allowed"]:
+                        break
+
+                # Scan
+                response = await dispatch_file_scan(
+                    buffer=file_data,
+                    filename=filename,
+                    mime_type=mime,
+                )
+                results.append(response)
+
+                # Persist result
+                file_hash = hashlib.sha256(file_data).hexdigest()
+                background_tasks.add_task(_persist_scan_result, db, response, user_id, file_hash)
+                
+                if active_user:
+                    await increment_scan_count(str(active_user.id))
+
+    except zipfile.BadZipFile:
+        raise HTTPException(status_code=400, detail="Corrupted or invalid ZIP file.")
+
+    background_tasks.add_task(
+        _log_audit, db, "SCAN_BATCH_ZIP", str(uuid.uuid4()), request,
+        {"filename": file.filename, "file_count": len(results)},
     )
 
-    return response
+    return results
 
 
 # ─── POST /scan/url ───────────────────────────────────────────────────────────
@@ -369,10 +505,6 @@ async def scan_file(
     "/url",
     response_model=VerificationResponse,
     summary="Scan a URL for phishing indicators",
-    description=(
-        "Submit a URL for phishing analysis. Checks typosquatting, suspicious TLDs, "
-        "phishing keywords, and optionally queries VirusTotal / Google Safe Browsing."
-    ),
     status_code=status.HTTP_200_OK,
 )
 async def scan_url(
@@ -381,15 +513,34 @@ async def scan_url(
     body: UrlScanRequest,
     db: AsyncSession = Depends(get_db),
     current_user: Optional[User] = Depends(get_optional_current_user),
+    api_user: Optional[User] = Depends(verify_api_key),
 ) -> VerificationResponse:
+
+    active_user = api_user or current_user
+    user_id = active_user.id if active_user else None
+
+    # Quota check
+    if active_user:
+        quota = await check_user_quota(str(active_user.id), active_user.tier, active_user.role)
+        if not quota["allowed"]:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail=f"Daily scan quota exceeded.",
+            )
 
     url = str(body.url)
     if not url.startswith(("http://", "https://")):
         url = "https://" + url
 
+    # SSRF Hardening
+    from app.middleware.security_middleware import validate_url_ssrf
+    try:
+        validate_url_ssrf(url)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
     log.info("scan_url.received", url=url)
 
-    # ── HMAC Signature Check ──────────────────────────────────────────────────
     x_signature = request.headers.get("X-Signature")
     hmac_verified = None
     if x_signature:
@@ -409,7 +560,10 @@ async def scan_url(
         log.error("scan_url.engine_error", error=str(exc))
         raise HTTPException(status_code=500, detail="URL analysis engine error.")
 
-    background_tasks.add_task(_persist_scan_result, db, response, current_user.id if current_user else None)
+    if active_user:
+        await increment_scan_count(str(active_user.id))
+
+    background_tasks.add_task(_persist_scan_result, db, response, user_id)
     background_tasks.add_task(
         _log_audit, db, "SCAN_URL", response.id, request,
         {"url": url, "verdict": response.verdict, "confidence": response.confidence},
@@ -418,49 +572,19 @@ async def scan_url(
     return response
 
 
-# ─── POST /scan/url/sandbox ───────────────────────────────────────────────────
-
-@router.post(
-    "/url/sandbox",
-    summary="Inspect URL in sandboxed environment with SSL cert analysis",
-    status_code=status.HTTP_200_OK,
-)
-async def sandbox_url(body: UrlScanRequest):
-    from app.services.sandbox_service import inspect_url_sandbox
-    return inspect_url_sandbox(body.url)
-
-
-# ─── GET /scan/verify/{report_hash} ──────────────────────────────────────────
-
-@router.get(
-    "/verify/{report_hash}",
-    summary="Verify cryptographic PDF certificate authenticity",
-    status_code=status.HTTP_200_OK,
-)
-async def verify_report_certificate(report_hash: str):
-    return {
-        "status": "VALID_CRYPTOGRAPHIC_CERTIFICATE",
-        "report_hash": report_hash,
-        "issuer": "DeepGuard Verification Authority",
-        "issued_at": "2026-08-20T07:42:00Z",
-        "algorithm": "HMAC-SHA256",
-        "is_tampered": False,
-        "verification_url": f"http://localhost:5173/verify/{report_hash}"
-    }
-
-
 # ─── GET /scan/history ────────────────────────────────────────────────────────
 
 @router.get(
     "/history",
     response_model=List[ScanHistoryItem],
-    summary="Get paginated scan history",
-    description="Returns the N most recent scan results ordered by timestamp descending.",
+    summary="Get paginated scan history with filtering",
     status_code=status.HTTP_200_OK,
 )
 async def get_scan_history(
     limit: int = 50,
     offset: int = 0,
+    media_type: Optional[str] = None,
+    verdict: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
 ) -> List[ScanHistoryItem]:
 
@@ -468,8 +592,17 @@ async def get_scan_history(
         limit = 200
 
     try:
+        # Enforce soft-delete: only query where deleted_at is null
+        conditions = [ScanResult.deleted_at.is_(None)]
+
+        if media_type:
+            conditions.append(ScanResult.media_type == media_type.lower())
+        if verdict:
+            conditions.append(ScanResult.verdict == verdict.upper())
+
         stmt = (
             select(ScanResult)
+            .where(and_(*conditions))
             .order_by(desc(ScanResult.created_at))
             .offset(offset)
             .limit(limit)
@@ -491,94 +624,46 @@ async def get_scan_history(
         ]
     except Exception as exc:
         log.error("scan_history.db_error", error=str(exc))
-        # Return empty list gracefully if DB not yet set up
         return []
 
 
-# ─── GET & POST /scan/status/{job_id} ──────────────────────────────────────────
+# ─── DELETE /scan/{scan_id} — Soft Delete (GDPR Compliance) ───────────────────
 
-@router.get(
-    "/status/{job_id}",
-    summary="Check status of asynchronous scan job",
+@router.delete(
+    "/{scan_id}",
+    summary="Soft-delete a scan result (GDPR Compliance)",
     status_code=status.HTTP_200_OK,
 )
-@router.post(
-    "/status/{job_id}",
-    summary="Check status of asynchronous scan job",
-    status_code=status.HTTP_200_OK,
-)
-async def get_job_status(job_id: str, db: AsyncSession = Depends(get_db)):
-    from celery.result import AsyncResult
-    from app.core.celery_app import celery_app
-    
-    res = AsyncResult(job_id, app=celery_app)
-    
-    status_str = "PENDING"
-    percentage = 10
-    message = "Job is queued..."
-    result = None
+async def delete_scan_result(
+    scan_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Flags a scan record as deleted without purging it instantly from physical media,
+    hiding it from all history searches.
+    """
+    scan_uuid = uuid.UUID(scan_id)
 
-    if res.state == "PENDING":
-        status_str = "PENDING"
-        percentage = 10
-    elif res.state == "STARTED":
-        status_str = "PROCESSING"
-        percentage = 30
-        message = "Starting scan analysis..."
-    elif res.state == "PROCESSING":
-        status_str = "PROCESSING"
-        info = res.info or {}
-        percentage = info.get("progress", 50)
-        message = info.get("message", "Running forensic checks...")
-    elif res.state == "SUCCESS":
-        status_str = "SUCCESS"
-        percentage = 100
-        message = "Scan completed successfully."
-        result = res.result
-    elif res.state == "FAILURE":
-        status_str = "FAILED"
-        percentage = 0
-        message = str(res.result or "Task failed.")
+    # Update scan_result
+    result = await db.execute(select(ScanResult).where(ScanResult.id == scan_uuid))
+    record = result.scalar_one_or_none()
 
-    # Fallback to database query if DB contains a completed record
-    try:
-        stmt = select(ScanRecord).where(ScanRecord.id == uuid.UUID(job_id))
-        db_res = await db.execute(stmt)
-        db_record = db_res.scalar_one_or_none()
-        if db_record and db_record.verdict != "PENDING":
-            status_str = "SUCCESS"
-            percentage = 100
-            message = "Scan completed."
-            
-            details = db_record.details or {}
-            flags_list = details.get("forensic_flags", [])
-            
-            verdict_map_rev = {
-                "AUTHENTIC": "AUTHENTIC",
-                "SUSPICIOUS": "SUSPICIOUS",
-                "SYNTHETIC_DEEPFAKE": "DEEPFAKE_DETECTED"
-            }
-            
-            result = {
-                "id": job_id,
-                "verdict": verdict_map_rev.get(db_record.verdict, "DEEPFAKE_DETECTED"),
-                "confidence": db_record.confidence_score,
-                "media_type": db_record.media_type,
-                "filename": db_record.filename,
-                "flags": flags_list,
-                "heatmap_b64": db_record.heatmap_path,
-                "heatmap_available": db_record.heatmap_path is not None,
-                "engine_metadata": details.get("engine_metadata", {}),
-                "processing_time_ms": 0,
-                "timestamp": db_record.created_at.isoformat()
-            }
-    except Exception as exc:
-        log.warning("scan_status.db_fallback_failed", error=str(exc))
-        
+    if record:
+        record.deleted_at = datetime.now(timezone.utc)
+
+    # Update scan_record
+    result_rec = await db.execute(select(ScanRecord).where(ScanRecord.id == scan_uuid))
+    record_rec = result_rec.scalar_one_or_none()
+
+    if record_rec:
+        record_rec.deleted_at = datetime.now(timezone.utc)
+
+    await db.commit()
+    log.info("scan.soft_deleted", id=scan_id, deleted_by=str(current_user.id))
+
     return {
-        "job_id": job_id,
-        "status": status_str,
-        "progress": percentage,
-        "message": message,
-        "result": result
+        "status": "DELETED",
+        "scan_id": scan_id,
+        "message": "Scan result soft-deleted successfully.",
     }

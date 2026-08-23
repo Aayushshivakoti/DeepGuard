@@ -11,6 +11,9 @@ import LoginPage from './pages/LoginPage';
 import SignupPage from './pages/SignupPage';
 import UserDashboard from './pages/UserDashboard';
 import AdminDashboard from './pages/AdminDashboard';
+import PasswordResetPage from './pages/PasswordResetPage';
+import EmailVerificationPage from './pages/EmailVerificationPage';
+import PublicReportPage from './pages/PublicReportPage';
 import NotFoundPage from './pages/NotFoundPage';
 
 function ProtectedRoute({ children }) {
@@ -57,6 +60,9 @@ export default function App() {
               <Route path="/" element={<LandingPage />} />
               <Route path="/login" element={<LoginPage />} />
               <Route path="/signup" element={<SignupPage />} />
+              <Route path="/password-reset" element={<PasswordResetPage />} />
+              <Route path="/verify-email" element={<EmailVerificationPage />} />
+              <Route path="/verify/:report_hash" element={<PublicReportPage />} />
 
               {/* Protected User Routes */}
               <Route

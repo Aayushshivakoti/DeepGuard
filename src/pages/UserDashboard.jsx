@@ -12,6 +12,8 @@ import InputTabs from '../components/workspace/InputTabs';
 import Dropzone from '../components/workspace/Dropzone';
 import ResultCard from '../components/workspace/ResultCard';
 import ScanProgress from '../components/workspace/ScanProgress';
+import AlertHub from '../components/common/AlertHub';
+import ShortcutsModal from '../components/workspace/ShortcutsModal';
 import ProfilePage from './ProfilePage';
 import AboutPage from './AboutPage';
 import ScheduledMonitorsTab from '../components/workspace/ScheduledMonitorsTab';
@@ -22,7 +24,7 @@ import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
 import {
   LogOut, User, Shield, RefreshCw, Calendar, FileText, CheckCircle,
   AlertTriangle, Scan, Link as LinkIcon, Menu, Search, ChevronLeft, ChevronRight,
-  HelpCircle, Eye, ChevronDown, ChevronUp, Cpu, SlidersHorizontal, Sun, Moon
+  HelpCircle, Eye, ChevronDown, ChevronUp, Cpu, SlidersHorizontal, Sun, Moon, Bell
 } from 'lucide-react';
 import jsPDF from 'jspdf';
 
@@ -35,6 +37,8 @@ export default function UserDashboard() {
 
   // Responsive Drawer State
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+  const [showShortcuts, setShowShortcuts] = useState(false);
+  const [showAlertHub, setShowAlertHub] = useState(false);
 
   const { toggleHistory } = useApp();
 
@@ -43,13 +47,23 @@ export default function UserDashboard() {
       dispatch({ type: ACTIONS.SET_ACTIVE_TAB, payload: 'url' });
       setTimeout(() => {
         const input = document.getElementById('url-scan-input');
-        if (input) input.focus();
+        if (input) {
+          input.focus();
+          input.classList.add('ring-2', 'ring-cyan-500', 'animate-pulse');
+          setTimeout(() => {
+            input.classList.remove('ring-2', 'ring-cyan-500', 'animate-pulse');
+          }, 2000);
+        }
       }, 80);
     },
     onToggleSearch: () => {
       const input = document.getElementById('workspace-search-input');
       if (input) {
         input.focus();
+        input.classList.add('ring-2', 'ring-cyan-500', 'animate-pulse');
+        setTimeout(() => {
+          input.classList.remove('ring-2', 'ring-cyan-500', 'animate-pulse');
+        }, 2000);
       } else {
         toggleHistory();
       }
@@ -587,6 +601,27 @@ export default function UserDashboard() {
               </span>
             </button>
 
+            {/* Help/Shortcuts Button */}
+            <button
+              onClick={() => setShowShortcuts(true)}
+              className="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-900 border border-transparent hover:border-slate-800 transition-all flex items-center justify-center"
+              title="Keyboard Shortcuts"
+            >
+              <HelpCircle size={15} />
+            </button>
+
+            {/* Alert Hub Notification Button */}
+            <button
+              onClick={() => setShowAlertHub(!showAlertHub)}
+              className={`p-2 rounded-xl border border-transparent transition-all flex items-center justify-center relative ${
+                showAlertHub ? 'bg-cyan-500/10 text-cyan-400 border-cyan-500/20' : 'text-slate-400 hover:text-white hover:bg-slate-900'
+              }`}
+              title="Incident Alert Tray"
+            >
+              <Bell size={15} />
+              <span className="absolute top-1 right-1 w-2 h-2 rounded-full bg-rose-500 animate-ping" />
+            </button>
+
             {/* Theme Toggle Button */}
             <button
               onClick={toggleTheme}
@@ -606,6 +641,9 @@ export default function UserDashboard() {
           </div>
         </header>
 
+        {/* Alert Hub Component Container */}
+        <AlertHub isOpen={showAlertHub} onClose={() => setShowAlertHub(false)} />
+
         {/* Dynamic Nested Routes Content */}
         <main className="flex-1 overflow-y-auto p-6 cyber-grid space-y-6">
           <Routes>
@@ -615,6 +653,9 @@ export default function UserDashboard() {
             <Route path="monitors" element={<ScheduledMonitorsTab />} />
           </Routes>
         </main>
+
+        {/* Keyboard Shortcuts Modal */}
+        <ShortcutsModal isOpen={showShortcuts} onClose={() => setShowShortcuts(false)} />
       </div>
     </div>
   );

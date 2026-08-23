@@ -1,15 +1,26 @@
 """
-app/core/security.py — JWT Token Management & Password Hashing
+app/core/security.py — JWT Token Management, Password Hashing, & Security Utilities
+
+Provides:
+  - bcrypt password hashing with configurable rounds
+  - JWT access token creation and decoding
+  - JWT refresh token creation and verification (SHA-256 hashed)
+  - HMAC signature verification
+  - PDF payload sanitization
 """
 from __future__ import annotations
 
+import hashlib
+import hmac
+import secrets
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, Tuple
 
-from jose import JWTError, jwt
 import bcrypt
+from jose import JWTError, jwt
 
 from app.core.config import settings
+
 
 # ─── Password Hashing ──────────────────────────────────────────────────────────
 
@@ -17,7 +28,7 @@ from app.core.config import settings
 def hash_password(plain_password: str) -> str:
     """Return a bcrypt hash of the plain-text password."""
     password_bytes = plain_password.encode("utf-8")
-    salt = bcrypt.gensalt()
+    salt = bcrypt.gensalt(rounds=12)
     hashed = bcrypt.hashpw(password_bytes, salt)
     return hashed.decode("utf-8")
 
@@ -32,14 +43,19 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
         return False
 
 
-# ─── JWT Tokens ────────────────────────────────────────────────────────────────
+# ─── JWT Access Tokens ─────────────────────────────────────────────────────────
 
 def create_access_token(subject: str | Any, expires_delta: timedelta | None = None) -> str:
     """Create a signed JWT access token."""
     expire = datetime.now(timezone.utc) + (
         expires_delta or timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     )
-    payload = {"sub": str(subject), "exp": expire, "iat": datetime.now(timezone.utc)}
+    payload = {
+        "sub": str(subject),
+        "exp": expire,
+        "iat": datetime.now(timezone.utc),
+        "type": "access",
+    }
     return jwt.encode(payload, settings.SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
 
 
@@ -57,10 +73,28 @@ def get_subject_from_token(token: str) -> str | None:
         return None
 
 
-# ─── HMAC Signature Verification ─────────────────────────────────────────────
+# ─── JWT Refresh Tokens ────────────────────────────────────────────────────────
 
-import hmac
-import hashlib
+def create_refresh_token() -> Tuple[str, str, datetime]:
+    """
+    Generate a new refresh token.
+
+    Returns:
+        (raw_token, token_hash, expires_at) — store the hash in DB,
+        return raw_token to client.
+    """
+    raw_token = secrets.token_urlsafe(64)
+    token_hash = hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
+    expires_at = datetime.now(timezone.utc) + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
+    return raw_token, token_hash, expires_at
+
+
+def hash_refresh_token(raw_token: str) -> str:
+    """Hash a raw refresh token for DB lookup."""
+    return hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
+
+
+# ─── HMAC Signature Verification ─────────────────────────────────────────────
 
 def verify_hmac_signature(payload: bytes, signature_hex: str, secret_key: str) -> bool:
     """
@@ -76,6 +110,15 @@ def verify_hmac_signature(payload: bytes, signature_hex: str, secret_key: str) -
         return hmac.compare_digest(expected, signature_hex)
     except Exception:
         return False
+
+
+def generate_hmac_signature(payload: bytes, secret_key: str) -> str:
+    """Generate HMAC-SHA256 signature for a payload."""
+    return hmac.new(
+        secret_key.encode("utf-8"),
+        payload,
+        hashlib.sha256
+    ).hexdigest()
 
 
 # ─── In-Memory File Sanitizer ────────────────────────────────────────────────

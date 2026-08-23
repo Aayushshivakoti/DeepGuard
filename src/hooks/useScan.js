@@ -3,54 +3,6 @@ import { useApp, ACTIONS } from '../context/AppContext';
 import { scanFile, scanUrl, getScanJobStatus } from '../api/scanApi';
 import { useToast } from '../context/ToastContext';
 
-const SCAN_STEPS = {
-  image: [
-    'Parsing image metadata...',
-    'Extracting facial landmarks...',
-    'Running Spatial FFT analysis...',
-    'Applying GAN fingerprint detector...',
-    'Computing Grad-CAM heatmap...',
-    'Cross-referencing EXIF database...',
-    'Generating forensic report...',
-  ],
-  video: [
-    'Extracting video frames...',
-    'Analyzing temporal consistency...',
-    'Detecting facial blending artifacts...',
-    'Running optical flow analysis...',
-    'Checking audio-visual sync...',
-    'Computing spectral anomaly score...',
-    'Generating forensic report...',
-  ],
-  audio: [
-    'Parsing audio waveform...',
-    'Computing Mel-spectrogram...',
-    'Detecting voice clone markers...',
-    'Analyzing prosody patterns...',
-    'Running LFCC feature extraction...',
-    'Comparing vocal tract model...',
-    'Generating forensic report...',
-  ],
-  pdf: [
-    'Extracting document structure...',
-    'Scanning embedded metadata...',
-    'Checking digital signatures...',
-    'Detecting hidden layers...',
-    'Analyzing font anomalies...',
-    'Running OCR consistency check...',
-    'Generating forensic report...',
-  ],
-  url: [
-    'Resolving domain DNS...',
-    'Checking SSL certificate...',
-    'Scanning domain registration...',
-    'Running Google Safe Browsing check...',
-    'Analyzing URL pattern matching...',
-    'Computing phishing probability...',
-    'Generating threat report...',
-  ],
-};
-
 export function useScan() {
   const { dispatch } = useApp();
   const { addToast } = useToast();
@@ -75,15 +27,73 @@ export function useScan() {
         return;
       }
 
-      // If it is a Celery background job, begin polling
       const jobId = data.id;
-      let jobStatus = "PENDING";
-      let retries = 0;
-      const maxRetries = 100;
 
-      while (jobStatus === "PENDING" || jobStatus === "PROCESSING") {
-        await new Promise(r => setTimeout(r, 1500));
-        try {
+      // ─── WebSocket Connection for Real-Time Progression ──────────────────
+      try {
+        await new Promise((resolve, reject) => {
+          const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+          const wsUrl = `${protocol}//localhost:8000/api/v1/ws/scans/${jobId}`;
+          const socket = new WebSocket(wsUrl);
+          let hasEnded = false;
+
+          socket.onmessage = (event) => {
+            try {
+              const statusUpdate = JSON.parse(event.data);
+              const jobStatus = statusUpdate.status;
+              
+              if (statusUpdate.progress) {
+                dispatch({ type: ACTIONS.SET_SCAN_PROGRESS, payload: statusUpdate.progress });
+              }
+              if (statusUpdate.message) {
+                dispatch({ type: ACTIONS.SET_SCAN_STEP, payload: statusUpdate.message });
+              }
+
+              if (jobStatus === "SUCCESS" && statusUpdate.result) {
+                hasEnded = true;
+                const finalResult = statusUpdate.result;
+                dispatch({ type: ACTIONS.SET_SCAN_PROGRESS, payload: 100 });
+                dispatch({ type: ACTIONS.SET_SCAN_STEP, payload: 'Forensic evaluation successful.' });
+                setTimeout(() => {
+                  dispatch({ type: ACTIONS.SET_SCAN_RESULT, payload: finalResult });
+                  dispatch({ type: ACTIONS.ADD_TO_HISTORY, payload: { ...finalResult, filename: file.name } });
+                  addToast(`Forensic verification successful for ${file.name}`, 'success');
+                  socket.close();
+                  resolve();
+                }, 400);
+              } else if (jobStatus === "FAILED" || jobStatus === "FAILURE") {
+                hasEnded = true;
+                socket.close();
+                reject(new Error(statusUpdate.message || "Background verification task failed."));
+              }
+            } catch (err) {
+              console.error("WS payload parse error:", err);
+            }
+          };
+
+          socket.onerror = (err) => {
+            if (!hasEnded) {
+              socket.close();
+              reject(new Error("WebSocket connection error."));
+            }
+          };
+
+          socket.onclose = () => {
+            if (!hasEnded) {
+              reject(new Error("WebSocket closed unexpectedly."));
+            }
+          };
+        });
+      } catch (wsError) {
+        console.warn("WebSocket failed, falling back to polling...", wsError);
+        
+        // ─── Fallback HTTP Polling ──────────────────────────────────────────
+        let jobStatus = "PENDING";
+        let retries = 0;
+        const maxRetries = 100;
+
+        while (jobStatus === "PENDING" || jobStatus === "PROCESSING") {
+          await new Promise(r => setTimeout(r, 2000));
           const statusUpdate = await getScanJobStatus(jobId);
           jobStatus = statusUpdate.status || "PENDING";
           
@@ -106,21 +116,16 @@ export function useScan() {
           } else if (jobStatus === "FAILURE") {
             throw new Error(statusUpdate.error || "Background verification task failed.");
           }
-        } catch (pollErr) {
-          console.warn("Polling status error:", pollErr);
-          retries++;
-          if (retries > maxRetries) {
-            throw new Error("Polling timeout exceeded.");
-          }
         }
       }
+
     } catch (err) {
       console.error("Scan failed:", err);
       dispatch({ type: ACTIONS.SET_SCAN_STATUS, payload: 'error' });
       dispatch({ type: ACTIONS.SET_SCAN_STEP, payload: err.message || 'Scan process encountered an error.' });
       addToast(err.message || 'Scan process encountered an error.', 'error');
     }
-  }, [dispatch]);
+  }, [dispatch, addToast]);
 
   const runUrlScan = useCallback(async (url) => {
     dispatch({ type: ACTIONS.SET_SCAN_STATUS, payload: 'scanning' });
@@ -142,15 +147,73 @@ export function useScan() {
         return;
       }
 
-      // If it is a Celery background job, begin polling
       const jobId = data.id;
-      let jobStatus = "PENDING";
-      let retries = 0;
-      const maxRetries = 100;
 
-      while (jobStatus === "PENDING" || jobStatus === "PROCESSING") {
-        await new Promise(r => setTimeout(r, 1500));
-        try {
+      // ─── WebSocket Connection for URL Threat Assessment ─────────────────
+      try {
+        await new Promise((resolve, reject) => {
+          const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+          const wsUrl = `${protocol}//localhost:8000/api/v1/ws/scans/${jobId}`;
+          const socket = new WebSocket(wsUrl);
+          let hasEnded = false;
+
+          socket.onmessage = (event) => {
+            try {
+              const statusUpdate = JSON.parse(event.data);
+              const jobStatus = statusUpdate.status;
+              
+              if (statusUpdate.progress) {
+                dispatch({ type: ACTIONS.SET_SCAN_PROGRESS, payload: statusUpdate.progress });
+              }
+              if (statusUpdate.message) {
+                dispatch({ type: ACTIONS.SET_SCAN_STEP, payload: statusUpdate.message });
+              }
+
+              if (jobStatus === "SUCCESS" && statusUpdate.result) {
+                hasEnded = true;
+                const finalResult = statusUpdate.result;
+                dispatch({ type: ACTIONS.SET_SCAN_PROGRESS, payload: 100 });
+                dispatch({ type: ACTIONS.SET_SCAN_STEP, payload: 'Threat assessment complete.' });
+                setTimeout(() => {
+                  dispatch({ type: ACTIONS.SET_SCAN_RESULT, payload: finalResult });
+                  dispatch({ type: ACTIONS.ADD_TO_HISTORY, payload: { ...finalResult, url } });
+                  addToast(`URL threat assessment successful`, 'success');
+                  socket.close();
+                  resolve();
+                }, 400);
+              } else if (jobStatus === "FAILED" || jobStatus === "FAILURE") {
+                hasEnded = true;
+                socket.close();
+                reject(new Error(statusUpdate.message || "Background verification task failed."));
+              }
+            } catch (err) {
+              console.error("WS payload parse error:", err);
+            }
+          };
+
+          socket.onerror = (err) => {
+            if (!hasEnded) {
+              socket.close();
+              reject(new Error("WebSocket connection error."));
+            }
+          };
+
+          socket.onclose = () => {
+            if (!hasEnded) {
+              reject(new Error("WebSocket closed unexpectedly."));
+            }
+          };
+        });
+      } catch (wsError) {
+        console.warn("WebSocket failed, falling back to polling...", wsError);
+
+        // ─── Fallback HTTP Polling ──────────────────────────────────────────
+        let jobStatus = "PENDING";
+        let retries = 0;
+        const maxRetries = 100;
+
+        while (jobStatus === "PENDING" || jobStatus === "PROCESSING") {
+          await new Promise(r => setTimeout(r, 2000));
           const statusUpdate = await getScanJobStatus(jobId);
           jobStatus = statusUpdate.status || "PENDING";
           
@@ -173,21 +236,16 @@ export function useScan() {
           } else if (jobStatus === "FAILURE") {
             throw new Error(statusUpdate.error || "Background URL verification failed.");
           }
-        } catch (pollErr) {
-          console.warn("Polling URL status error:", pollErr);
-          retries++;
-          if (retries > maxRetries) {
-            throw new Error("Polling timeout exceeded.");
-          }
         }
       }
+
     } catch (err) {
       console.error("URL scan failed:", err);
       dispatch({ type: ACTIONS.SET_SCAN_STATUS, payload: 'error' });
       dispatch({ type: ACTIONS.SET_SCAN_STEP, payload: err.message || 'Threat scan encountered an error.' });
       addToast(err.message || 'URL threat scan failed.', 'error');
     }
-  }, [dispatch]);
+  }, [dispatch, addToast]);
 
   return { runScan, runUrlScan };
 }

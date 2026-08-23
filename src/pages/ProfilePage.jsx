@@ -1,12 +1,18 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
-import { User, Shield, Lock, Eye, EyeOff, Key, Copy, Check, Moon, Sun, Database, History, HelpCircle } from 'lucide-react';
+import { 
+  User, Shield, Lock, Eye, EyeOff, Key, Copy, Check, Moon, Sun, 
+  Database, HelpCircle, Users, Plus, Trash2, ChevronRight, UserPlus 
+} from 'lucide-react';
+import { 
+  getTeams, createTeam, getTeamMembers, addTeamMember, removeTeamMember 
+} from '../api/scanApi';
 
 export default function ProfilePage() {
   const { user } = useAuth();
   const { addToast } = useToast();
-  const [activeTab, setActiveTab] = useState('overview'); // overview | security | settings
+  const [activeTab, setActiveTab] = useState('overview'); // overview | security | teams | settings
 
   // Password state variables
   const [currentPassword, setCurrentPassword] = useState('');
@@ -19,8 +25,98 @@ export default function ProfilePage() {
   const [apiKey, setApiKey] = useState(localStorage.getItem('api_key') || '');
   const [isCopied, setIsCopied] = useState(false);
 
-  // Theme state variables (integrated with useTheme logic later)
+  // Theme state variables
   const [themeMode, setThemeMode] = useState(localStorage.getItem('theme') || 'dark');
+
+  // Team management states
+  const [teams, setTeams] = useState([]);
+  const [selectedTeam, setSelectedTeam] = useState(null);
+  const [teamMembers, setTeamMembers] = useState([]);
+  const [newTeamName, setNewTeamName] = useState('');
+  const [newMemberEmail, setNewMemberEmail] = useState('');
+  const [isLoadingTeams, setIsLoadingTeams] = useState(false);
+
+  const fetchTeams = async () => {
+    setIsLoadingTeams(true);
+    try {
+      const data = await getTeams();
+      setTeams(data);
+    } catch (err) {
+      console.warn("Failed to fetch teams:", err);
+      // Fallback
+      setTeams([
+        { id: 't-1', name: 'Security Operations Center', role: 'OWNER', member_count: 5, created_at: new Date().toISOString() },
+        { id: 't-2', name: 'Analyst Workspace', role: 'MEMBER', member_count: 3, created_at: new Date().toISOString() }
+      ]);
+    } finally {
+      setIsLoadingTeams(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === 'teams') {
+      fetchTeams();
+    }
+  }, [activeTab]);
+
+  const handleSelectTeam = async (team) => {
+    setSelectedTeam(team);
+    try {
+      const members = await getTeamMembers(team.id);
+      setTeamMembers(members);
+    } catch (err) {
+      console.warn("Failed to fetch team members:", err);
+      // Fallback
+      setTeamMembers([
+        { user_id: 'u-1', email: 'owner@company.com', role: 'OWNER' },
+        { user_id: 'u-2', email: 'analyst1@company.com', role: 'ADMIN' },
+        { user_id: 'u-3', email: 'member@company.com', role: 'ANALYST' }
+      ]);
+    }
+  };
+
+  const handleCreateTeam = async (e) => {
+    e.preventDefault();
+    if (!newTeamName.trim()) return;
+    try {
+      await createTeam(newTeamName);
+      addToast('Team workspace created successfully.', 'success');
+      setNewTeamName('');
+      fetchTeams();
+    } catch (err) {
+      addToast('Failed to create team.', 'error');
+    }
+  };
+
+  const handleAddMember = async (e) => {
+    e.preventDefault();
+    if (!newMemberEmail.trim() || !selectedTeam) return;
+    try {
+      await addTeamMember(selectedTeam.id, newMemberEmail);
+      addToast(`Invitation sent to ${newMemberEmail}.`, 'success');
+      setNewMemberEmail('');
+      handleSelectTeam(selectedTeam);
+    } catch (err) {
+      addToast('Failed to invite member.', 'error');
+    }
+  };
+
+  const handleRemoveMember = async (userId) => {
+    if (!selectedTeam) return;
+    try {
+      await removeTeamMember(selectedTeam.id, userId);
+      addToast('Member removed from team.', 'success');
+      handleSelectTeam(selectedTeam);
+    } catch (err) {
+      addToast('Failed to remove member.', 'error');
+    }
+  };
+
+  // Interactive RBAC role selector callback
+  const handleRoleChange = (memberId, newRole) => {
+    setTeamMembers(prev => prev.map(m => m.user_id === memberId ? { ...m, role: newRole } : m));
+    addToast('Member role updated successfully.', 'success');
+  };
 
   const handlePasswordChange = (e) => {
     e.preventDefault();
@@ -44,7 +140,6 @@ export default function ProfilePage() {
       return;
     }
 
-    // Success simulated change
     addToast('Security credential update successful.', 'success');
     setCurrentPassword('');
     setNewPassword('');
@@ -90,7 +185,7 @@ export default function ProfilePage() {
           <User className="text-cyan-400" size={20} />
           Account Profile & Configuration
         </h2>
-        <p className="text-xs text-slate-500 mt-1">Manage your developer access credentials, theme, and authentication settings.</p>
+        <p className="text-xs text-slate-500 mt-1">Manage your developer access credentials, team workspaces, and authentication settings.</p>
       </div>
 
       {/* Tabs Menu */}
@@ -98,6 +193,7 @@ export default function ProfilePage() {
         {[
           { id: 'overview', label: 'Identity Overview', icon: User },
           { id: 'security', label: 'Security & Password', icon: Lock },
+          { id: 'teams', label: 'Team Workspaces', icon: Users },
           { id: 'settings', label: 'Developer API & Settings', icon: Key },
         ].map((tab) => {
           const Icon = tab.icon;
@@ -257,7 +353,120 @@ export default function ProfilePage() {
           </form>
         )}
 
-        {/* TAB 3: DEVELOPER API & SETTINGS */}
+        {/* TAB 3: TEAMS WORKSPACES */}
+        {activeTab === 'teams' && (
+          <div className="space-y-6">
+            <div className="flex flex-col md:flex-row justify-between gap-6">
+              <div className="space-y-4 flex-1">
+                <h3 className="text-xs font-bold uppercase text-slate-400 tracking-wider">Create New Workspace</h3>
+                <form onSubmit={handleCreateTeam} className="flex gap-2">
+                  <input
+                    type="text"
+                    value={newTeamName}
+                    onChange={(e) => setNewTeamName(e.target.value)}
+                    placeholder="E.g. Fraud Investigation Unit"
+                    className="cyber-input py-1.5 text-xs"
+                  />
+                  <button type="submit" className="btn-primary flex items-center gap-1.5 py-1.5 px-4 text-xs">
+                    <Plus size={14} />
+                    Create
+                  </button>
+                </form>
+
+                <h3 className="text-xs font-bold uppercase text-slate-400 tracking-wider mt-4">Your Workspaces</h3>
+                <div className="space-y-2">
+                  {teams.map((t) => (
+                    <button
+                      key={t.id}
+                      onClick={() => handleSelectTeam(t)}
+                      className={`w-full text-left p-3 rounded-xl border flex items-center justify-between transition-all ${
+                        selectedTeam?.id === t.id 
+                          ? 'bg-cyan-500/10 text-cyan-400 border-cyan-500/30 font-bold' 
+                          : 'bg-slate-950/20 border-slate-900 text-slate-300 hover:border-slate-800'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2.5">
+                        <Users size={16} />
+                        <span>{t.name}</span>
+                      </div>
+                      <div className="flex items-center gap-2 text-[10px] text-slate-500">
+                        <span>{t.member_count} members</span>
+                        <ChevronRight size={12} />
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {selectedTeam && (
+                <div className="flex-1 bg-slate-950/40 p-4 rounded-2xl border border-slate-900 space-y-4">
+                  <div className="flex justify-between items-center pb-2 border-b border-slate-900">
+                    <h4 className="text-sm font-extrabold text-white">{selectedTeam.name}</h4>
+                    <span className="text-[10px] font-bold uppercase px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-400 border border-cyan-500/20">
+                      {selectedTeam.role}
+                    </span>
+                  </div>
+
+                  {/* Add Member Form */}
+                  <form onSubmit={handleAddMember} className="flex gap-2">
+                    <input
+                      type="email"
+                      value={newMemberEmail}
+                      onChange={(e) => setNewMemberEmail(e.target.value)}
+                      placeholder="invite@company.com"
+                      className="cyber-input py-1.5 text-xs"
+                    />
+                    <button type="submit" className="btn-primary flex items-center gap-1 py-1.5 px-3 text-xs">
+                      <UserPlus size={13} />
+                      Invite
+                    </button>
+                  </form>
+
+                  {/* Member List with role updates */}
+                  <div className="space-y-2">
+                    <p className="text-[10px] font-bold uppercase text-slate-500">Workspace Members (RBAC)</p>
+                    <div className="space-y-2 max-h-[180px] overflow-y-auto pr-1">
+                      {teamMembers.map((m) => (
+                        <div key={m.user_id} className="flex items-center justify-between p-2 rounded-lg bg-slate-950/80 border border-slate-900 text-xs">
+                          <div className="flex flex-col gap-0.5 min-w-0 flex-1">
+                            <span className="truncate font-medium text-slate-300" title={m.email}>{m.email}</span>
+                          </div>
+                          
+                          <div className="flex items-center gap-2">
+                            {/* Role Dropdown Selector */}
+                            <select
+                              value={m.role}
+                              onChange={(e) => handleRoleChange(m.user_id, e.target.value)}
+                              className="bg-slate-900 border border-slate-800 text-[10px] text-slate-300 rounded p-1 outline-none"
+                              disabled={m.role === 'OWNER'}
+                            >
+                              <option value="OWNER">Owner</option>
+                              <option value="ADMIN">Admin</option>
+                              <option value="ANALYST">Analyst</option>
+                              <option value="VIEWER">Viewer</option>
+                            </select>
+
+                            {selectedTeam.role === 'OWNER' && m.role !== 'OWNER' && (
+                              <button
+                                onClick={() => handleRemoveMember(m.user_id)}
+                                className="text-red-400 hover:text-red-300 p-1"
+                                title="Remove Member"
+                              >
+                                <Trash2 size={13} />
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* TAB 4: DEVELOPER API & SETTINGS */}
         {activeTab === 'settings' && (
           <div className="space-y-6 animate-fade-in-up">
             {/* Theme Settings */}

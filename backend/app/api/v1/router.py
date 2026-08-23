@@ -12,6 +12,7 @@ from app.api.v1.monitors import router as monitors_router
 from app.api.v1.team import router as team_router
 from app.api.v1.webauthn import router as webauthn_router
 from app.api.v1.oauth import router as oauth_router
+from app.api.v1.websockets import router as websockets_router
 
 api_v1_router = APIRouter()
 
@@ -23,3 +24,4 @@ api_v1_router.include_router(monitors_router)
 api_v1_router.include_router(team_router)
 api_v1_router.include_router(webauthn_router)
 api_v1_router.include_router(oauth_router)
+api_v1_router.include_router(websockets_router)

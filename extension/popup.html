@@ -14,15 +14,27 @@
     .header {
       display: flex;
       align-items: center;
-      gap: 8px;
+      justify-content: space-between;
       border-bottom: 1px solid #1e293b;
       padding-bottom: 12px;
       margin-bottom: 12px;
     }
     .title {
-      font-weight: 800;
+      font-weight: 900;
       font-size: 14px;
       color: #38bdf8;
+      letter-spacing: 0.5px;
+    }
+    .settings-btn {
+      background: none;
+      border: none;
+      color: #94a3b8;
+      cursor: pointer;
+      font-size: 14px;
+      padding: 4px;
+    }
+    .settings-btn:hover {
+      color: #f1f5f9;
     }
     .input-box {
       width: 100%;
@@ -34,6 +46,10 @@
       border-radius: 8px;
       font-size: 12px;
       margin-bottom: 10px;
+      outline: none;
+    }
+    .input-box:focus {
+      border-color: #06b6d4;
     }
     .btn {
       width: 100%;
@@ -41,10 +57,14 @@
       border: none;
       color: #fff;
       font-weight: 700;
-      padding: 8px;
+      padding: 8.5px;
       border-radius: 8px;
       cursor: pointer;
       font-size: 12px;
+      transition: opacity 0.2s;
+    }
+    .btn:hover {
+      opacity: 0.9;
     }
     .result-card {
       margin-top: 12px;
@@ -63,23 +83,60 @@
       text-transform: uppercase;
     }
     .authentic { background: rgba(34, 197, 94, 0.2); color: #4ade80; }
+    .suspicious { background: rgba(245, 158, 11, 0.2); color: #fbbf24; }
     .phishing { background: rgba(239, 68, 68, 0.2); color: #f87171; }
+    
+    .panel {
+      display: block;
+    }
+    .hidden {
+      display: none;
+    }
+    .settings-item {
+      margin-bottom: 12px;
+      font-size: 11px;
+    }
+    .settings-label {
+      font-weight: bold;
+      color: #94a3b8;
+      display: block;
+      margin-bottom: 4px;
+    }
   </style>
 </head>
 <body>
   <div class="header">
-    <div class="title">DeepGuard Gateway</div>
+    <div class="title">DEEPGUARD GATEWAY</div>
+    <button id="toggleSettings" class="settings-btn" title="Toggle Settings">⚙</button>
   </div>
 
-  <input type="text" id="urlInput" class="input-box" placeholder="Paste URL or domain to scan..." />
-  <button id="scanBtn" class="btn">Verify Authenticity</button>
+  <!-- Scan Panel -->
+  <div id="scanPanel" class="panel">
+    <input type="text" id="urlInput" class="input-box" placeholder="Paste URL or domain to scan..." />
+    <button id="scanBtn" class="btn">Verify Authenticity</button>
 
-  <div id="resultCard" class="result-card">
-    <div style="display: flex; justify-content: space-between; align-items: center;">
-      <span id="verdictLabel" class="badge authentic">AUTHENTIC</span>
-      <span id="scoreLabel" style="font-size: 11px; font-weight: bold; color: #94a3b8;">Confidence: 94%</span>
+    <div id="resultCard" class="result-card">
+      <div style="display: flex; justify-content: space-between; align-items: center;">
+        <span id="verdictLabel" class="badge authentic">AUTHENTIC</span>
+        <span id="scoreLabel" style="font-size: 11px; font-weight: bold; color: #94a3b8;">Confidence: 94%</span>
+      </div>
+      <p id="headlineText" style="font-size: 11px; margin-top: 8px; color: #cbd5e1; font-weight: 500;"></p>
     </div>
-    <p id="headlineText" style="font-size: 11px; margin-top: 8px; color: #cbd5e1;"></p>
+  </div>
+
+  <!-- Settings Panel -->
+  <div id="settingsPanel" class="panel hidden">
+    <div class="settings-item">
+      <span class="settings-label">Server Endpoint URL</span>
+      <input type="text" id="endpointInput" class="input-box" value="http://localhost:8000/api/v1" />
+    </div>
+    
+    <div class="settings-item">
+      <span class="settings-label">Active Connection Status</span>
+      <div id="authStatus" style="font-size: 10px; color: #10b981; font-weight: bold;">Unauthenticated (Sync Web App to log in)</div>
+    </div>
+
+    <button id="saveSettingsBtn" class="btn" style="margin-top: 8px;">Save Settings</button>
   </div>
 
   <script src="popup.js"></script>

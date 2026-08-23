@@ -13,6 +13,8 @@ import time
 import structlog
 from typing import Dict, Any, Optional
 
+from app.core.config import settings
+
 log = structlog.get_logger(__name__)
 
 def format_cef_event(
@@ -23,16 +25,20 @@ def format_cef_event(
     name: str = "Media Authenticity Inspection",
     severity: str = "5",
     extension_data: Optional[Dict[str, Any]] = None,
-    secret_key: str = "DeepGuard-SIEM-HMAC"
+    secret_key: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Format standard CEF syslog payload with HMAC-SHA256 signature.
     CEF:Version|Device Vendor|Device Product|Device Version|Signature ID|Name|Severity|Extension
     """
+    # Use configured HMAC secret from settings (never hardcode)
+    if secret_key is None:
+        secret_key = settings.SIEM_HMAC_SECRET
+
     ext_str = " ".join([f"{k}={v}" for k, v in (extension_data or {}).items()])
     cef_string = f"CEF:0|{device_vendor}|{device_product}|{device_version}|{signature_id}|{name}|{severity}|{ext_str}"
     
-    # Calculate HMAC signature over CEF string
+    # Calculate HMAC signature
     hmac_sig = hmac.new(
         secret_key.encode("utf-8"),
         cef_string.encode("utf-8"),
