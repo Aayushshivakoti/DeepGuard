@@ -1,301 +1,208 @@
-# 🛡️ DeepGuard — Deepfake & Phishing Media Verification Gateway
+# DeepGuard — Multi-Modal Deepfake & Phishing Media Verification Platform
 
-[![Python](https://img.shields.io/badge/Python-3.11%2B-blue?logo=python&logoColor=white)](https://www.python.org/)
-[![React](https://img.shields.io/badge/React-19.0-61DAFB?logo=react&logoColor=black)](https://react.dev/)
-[![FastAPI](https://img.shields.io/badge/FastAPI-0.109%2B-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
-[![Docker](https://img.shields.io/badge/Docker-Ready-2496ED?logo=docker&logoColor=white)](https://www.docker.com/)
-[![Pytest](https://img.shields.io/badge/Pytest-Passing-46A2F1?logo=pytest&logoColor=white)](https://docs.pytest.org/)
-[![License](https://img.shields.io/badge/License-MIT-green)](https://opensource.org/licenses/MIT)
+## 1. Project Overview & Highlights
 
-DeepGuard is a production-grade, multi-modal security gateway designed to detect AI-generated deepfakes (spanning images, audio, and videos) and verify malicious phishing URLs and documents. By integrating advanced digital forensic analytics, deep-learning classifiers, real-time WebSockets, and distributed Celery workers, DeepGuard acts as a robust defense layer against media manipulation and phishing threats.
+**DeepGuard** is a high‑accuracy AI‑driven platform that verifies images, audio, video, PDFs and URLs for deepfakes and phishing content.  The system is engineered to **eliminate false‑positives on real photographs** by leveraging a novel **dual‑stream spatial‑frequency architecture** that fuses semantic RGB cues with spectral fingerprint analysis.
 
 ---
 
-## 🏗️ Workspace Layout & Architecture
+## 2. Detailed Algorithms & Technical Design (Why & How)
 
-### Repository Directory Tree
+### Dual‑Stream Fusion Architecture
+Real‑world smartphone photos differ dramatically from the clean, often down‑sampled images used to train naïve RGB‑only classifiers.  Camera‑sensor noise, compression artifacts, and lighting variations cause a classic single‑stream CNN to mis‑classify authentic images as AI‑generated (domain‑shift).  By **combining a spatial stream with a frequency stream**, DeepGuard learns both high‑level semantic features *and* the subtle high‑frequency patterns that generative models imprint on their outputs.
+
+### Spatial Stream (Backbone)
+- **Algorithm**: EfficientNet‑B4 (or ConvNeXt) fine‑tuned for a 2‑class problem (Authentic vs Deepfake).
+- **Mechanics**: Extracts semantic representations, detects lighting inconsistencies, facial boundary blending artefacts, and structural anatomical flaws.  The backbone is frozen on ImageNet weights and then trained on the fused dataset.
+
+### Frequency Stream (Spectral Fingerprinting)
+- **Algorithms**: 2‑D Fast Fourier Transform (FFT) and Error Level Analysis (ELA).
+- **Mechanics**: Computes the magnitude spectrum of the RGB image, producing a high‑frequency map that reveals periodic grid‑like artefacts left by GAN up‑samplers and diffusion pipelines.  ELA highlights compression‑level differences that are invisible in the RGB domain.
+
+### Feature Fusion & Calibration Head
+- **Fusion**: Concatenates the spatial feature vector (≈1280 dims) with the frequency feature vector (matched dimension via a lightweight CNN).
+- **Calibration**: Applies temperature scaling (Platt scaling) and trains with **Focal Loss** + **Label Smoothing** to avoid over‑confidence on noisy real photos.
+- **Decision Logic**:
+  - **Real**: probability < **40 %**
+  - **Uncertain**: **40 % – 85 %** (suggest manual review)
+  - **AI‑Generated**: > **85 %**
+
+---
+
+## 3. Model Training & Pipeline Datasets
+
+### Multi‑Domain Dataset Integration
+- **Real Images**: Flickr, COCO, and a curated collection of raw smartphone photos (varied lighting, ISO, motion blur).
+- **AI‑Generated Images**: Midjourney (v4‑v6), Stable Diffusion (1.5, XL, 3), DALL‑E 3, Flux.1, StyleGAN, and other public diffusion/GAN repos.
+
+### Noise Augmentation Pipeline (Albumentations)
+```python
+import albumentations as A
+
+transform = A.Compose([
+    A.Resize(380, 380),
+    A.RandomCrop(350, 350),
+    A.Resize(380, 380),
+    A.JpegCompression(quality_lower=30, quality_upper=95),
+    A.GaussNoise(var_limit=(10.0, 50.0)),
+    A.MotionBlur(p=0.2),
+    A.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1),
+    A.Normalize(mean=(0.485,0.456,0.406), std=(0.229,0.224,0.225)),
+    A.pytorch.transforms.ToTensorV2(),
+])
 ```
-├── backend/                       # Python FastAPI Backend
-│   ├── alembic/                   # Database migrations (PostgreSQL/SQLite)
-│   │   └── versions/              # Migration versions (e.g. 001_initial_schema.py)
-│   ├── app/
-│   │   ├── api/                   # REST & WS Endpoints (scan, admin, auth, webauthn, oauth)
-│   │   ├── core/                  # Configuration, JWT security, logging, rate limiting
-│   │   ├── db/                    # Async SQLAlchemy session mapping, models (user, audit, scan)
-│   │   ├── middleware/            # Security headers, quota managers, CORS
-│   │   ├── schemas/               # Pydantic validation schemas
-│   │   └── services/              # AI Modality Forensic Engines (spatial, temporal, audio, phishing)
-│   ├── tests/                     # Backend Pytest suite (conftest, engines, API endpoints)
-│   ├── Dockerfile                 # Container setup for FastAPI service
-│   ├── docker-compose.yml         # Dev cluster setup (Redis, PostgreSQL, Celery, Backend)
-│   ├── main.py                    # Uvicorn/FastAPI server entrypoint
-│   └── requirements.txt           # Python package dependencies
-├── src/                           # React Frontend Source (Vite-bundled)
-│   ├── api/                       # API clients (scanApi.js, authApi.js)
-│   ├── assets/                    # Static assets & stylesheets
-│   ├── components/                # Modular React Dashboard components (common, admin, workspace)
-│   ├── context/                   # Global React State Context (Auth, App)
-│   ├── hooks/                     # Custom React Hooks (theme, scan, keyboard shortcuts)
-│   ├── pages/                     # Full-Page views (Dashboard, Workspace, Profile, Admin)
-│   ├── index.css                  # Tailwinds CSS Stylesheet
-│   └── main.jsx                   # Vite entry point
-├── extension/                     # DeepGuard Chrome/Firefox Web Extension
-│   ├── manifest.json              # Manifest V3 configuration
-│   ├── background.js              # Service worker (context menus, storage syncing)
-│   ├── content.js                 # Content injection script
-│   ├── popup.html                 # Browser extension popup UI
-│   └── popup.js                   # Popup functionality
-├── docker-compose.yml             # Global orchestration docker-compose file
-├── package.json                   # Vite / React package manager
-├── vite.config.js                 # Vite compilation configuration
-└── README.md                      # Documentation
+The augmentation forces the model to learn **invariant forgery fingerprints** rather than mistaking ordinary camera noise for AI artefacts.
+
+---
+
+## 4. Architecture & Multi‑Process Stack
+
+- **FastAPI (Async)** – Primary HTTP API, authentication, and Swagger UI.
+- **Celery + Redis** – Background processing for large files, video/audio jobs, and batch ZIP scans.
+- **PostgreSQL** – Persistent storage of scan results, user accounts, and audit logs.
+- **Vite + React** – Modern, highly‑responsive dashboard for uploads, visual heatmaps (Grad‑CAM), and detailed forensic reports.
+- **Nginx (optional)** – Serves the compiled frontend in production and proxies to the FastAPI backend.
+
+---
+
+## 5. Prerequisites
+
+| Component | Minimum Version |
+|-----------|-----------------|
+| **OS** | Windows 10+, macOS 12+, Linux (any distro) |
+| **Python** | 3.10 – 3.12 (strictly, to avoid Rust/C‑wheel compilation issues) |
+| **Node.js** | v18+ |
+| **Docker & Docker‑Compose** | Latest stable (optional, for containerised deployment) |
+| **Git** | Any recent version |
+
+---
+
+## 6. Quick‑Start Guide (Local Development)
+
+### Single‑Command Launch
+```cmd
+# Windows (double‑click or from PowerShell)
+start.bat
 ```
-
-### Data Flow Architecture
-```mermaid
-graph TD
-    Client[Client UI / Browser Extension] -->|Upload File or URL| Gateway[FastAPI API Gateway]
-    Gateway -->|Verify JWT / API Key| Auth[Auth Guard & Quota Manager]
-    Auth -->|Initialize Job ID| Redis[(Redis Broker)]
-    Redis -->|Dispatch Async Job| Celery[Celery Task Workers]
-    
-    Celery -->|Invoke Forensic Suite| Engines{Forensic Engines}
-    Engines -->|Spatial Analysis| Spatial[Spatial Image Engine]
-    Engines -->|Temporal Consistency| Temporal[Temporal Video Engine]
-    Engines -->|Neural Audio Check| Audio[Audio Voice Clone Engine]
-    Engines -->|Threat & Heuristics| Phishing[Phishing & Doc Engine]
-    
-    Spatial -->|Grad-CAM Heatmap / FFT| Merge[Result Aggregator]
-    Temporal -->|Lip-Sync / Blink Deviations| Merge
-    Audio -->|Mel-Spectrogram / Flatness| Merge
-    Phishing -->|EXIF Tags / Typosquatting| Merge
-
-    Merge -->|Store Record| DB[(PostgreSQL / SQLite)]
-    Merge -->|WebSocket Broadcast| WS[WebSockets Broker]
-    WS -->|Progress States & Final Verdict| Client
-```
-
----
-
-## 🔍 Forensic Detection Engines (Technical Deep Dive)
-
-DeepGuard processes uploaded files and URLs through dedicated modality verification engines:
-
-### 1. Spatial Image Engine (`spatial_engine.py`)
-* **FFT Spectral Analysis**: Extracts the 2D Fast Fourier Transform magnitude spectrum from images. It evaluates high-frequency noise distributions to identify periodic grid anomalies left behind by Generative Adversarial Networks (GANs) and Diffusion models.
-* **Haar-Cascade Face Cropping**: Uses OpenCV cascade classifiers to isolate human faces for granular analysis, avoiding background noise distortion.
-* **EfficientNet-B4 Classification**: Processes the cropped regions through a deep convolutional network optimized to flag artifacts from synthetic face generators.
-* **Grad-CAM Visual Explainer**: Computes gradients at the final convolutional layers to isolate regions of interest. It outputs a base64-encoded visual heatmap overlay that highlights the specific regions identified as manipulated (e.g. eyes, mouth, nose boundaries).
-
-### 2. Audio Voice Clone Engine (`audio_engine.py`)
-* **Mel-Spectrogram Extraction**: Convers raw audio waveforms (WAV/MP3/M4A) via Librosa to compute 2D Log-Mel scale spectrograms.
-* **Vocoder Artifact Heuristics**:
-  * **Spectral Flatness**: Identifies unnaturally flat regions in the audio spectrum, which are characteristic of neural vocoder output.
-  * **Zero-Crossing Rate (ZCR)**: Analyzes localized temporal noise that frequently flags synthetic text-to-speech (TTS) architectures.
-  * **MFCC Delta Analytics**: Checks the velocity and acceleration changes in Mel-Frequency Cepstral Coefficients (MFCC) to find unnaturally smooth frame transitions.
-  * **Phase Coherence Check**: Detects periodic phase anomalies commonly generated by GAN-based voice generators.
-
-### 3. Temporal Video Engine (`temporal_engine.py`)
-* **Frame Sequence Extraction**: Splits videos into chronologically ordered frame buffers using OpenCV `VideoCapture`.
-* **Spatial Cross-Evaluation**: Sequentially evaluates extracted frame sequences through the Spatial Image Engine to detect transient inconsistencies.
-* **Eye-Blink Rate Tracker**: Monitors eye aspect ratios over time to flag anomalous patterns, such as an complete absence of blinking, which is common in older deepfake models.
-* **Lip-Sync Coherence**: Correlates mouth region movement vectors with audio energy amplitudes to detect speech-motion misalignment.
-
-### 4. Phishing & Document Engine (`phishing_engine.py` & `pdf_forensic_service.py`)
-* **URL Reputation & Heuristics**:
-  * **Typosquatting Detection**: Uses Levenshtein distance computations to flag lookalike domains that mimic high-value brands (e.g., `paypa1.com` instead of `paypal.com`).
-  * **IP & TLD Flagging**: Identifies direct IP addresses in URLs and flags domains that use high-risk Top-Level Domains (TLDs).
-* **EXIF Metadata Inspection**: Extracts metadata to verify editing history. It checks for signatures from software like Photoshop, GIMP, or Midjourney, and flags missing EXIF streams.
-* **PDF Forensic Service**:
-  * **Timeline Consistency**: Cross-references creation and modification timestamps in the document structure.
-  * **Font Analysis**: Checks for invalid or un-embedded fonts and flags PDF timeline modifications.
-  * **Active Content Inspection**: Scans the document stream for malicious triggers like embedded JavaScript (`/JavaScript`, `/JS`), OpenActions, and Launch actions.
-
----
-
-## 🖥️ Live Dashboard & UI Features
-
-The React dashboard incorporates several advanced features:
-
-* **GeoIP Threat Map**: An interactive SVG-based map component. It establishes a real-time WebSocket connection to `/api/v1/ws/alerts` and draws animated SVG arcs connecting incoming threat origins to DeepGuard HQ.
-* **Multi-Modal Split-Screen Sandbox**: Provides side-by-side workspace panels allowing users to isolate audio channels, slide between original images and Grad-CAM deepfake overlays, and synchronize video timelines.
-* **Progressive Loading Skeletons**: Minimizes perceived layout shifts by displaying animated CSS loading skeletons while background scan results load.
-* **Floating WebSocket Alert Hub**: A real-time notification hub that displays alerts when critical threats (e.g. `DEEPFAKE_DETECTED` or `PHISHING_DETECTED`) are detected anywhere on the platform.
-* **Interactive Keyboard Shortcuts**:
-  * `Ctrl + U`: Focus URL Scan input field (highlights the input with an animated cyan border).
-  * `Ctrl + K`: Toggle the slide-out historical search drawer.
-  * `?`: Toggle the interactive keyboard shortcuts cheat-sheet modal.
-  * `Escape`: Instantly close open modals, overlays, or search sidebars.
-
----
-
-## 🚀 Getting Started & Local Setup
-
-### Option A: Bare-Metal Local Setup
-
-#### Prerequisites
-* **Python**: v3.11 or higher
-* **Node.js**: v18.0 or higher
-* **Redis**: Installed and running (for Celery broker)
-
-#### 1. Backend Server & Celery Workers
-Navigate to the backend directory, configure dependencies, and start the application:
+or
 ```bash
-# Navigate to backend directory
-cd backend
-
-# Create virtual environment
-python -m venv venv
-
-# Activate virtual environment
-# Windows:
-.\venv\Scripts\activate
-# macOS/Linux:
-source venv/bin/activate
-
-# Install requirements
-pip install -r requirements.txt
-
-# Create environment configuration
-copy .env.example .env
-
-# Initialize database schemas and seed default credentials
-python -m app.db.init_db
-
-# Launch the FastAPI web server
-uvicorn main:app --reload --port 8000
+# Cross‑platform
+python start.py
 ```
-In a separate terminal (with virtualenv activated), start the background task worker:
-```bash
-# Launch Celery worker
-celery -A app.core.celery_app worker --loglevel=info
-```
-The interactive Swagger API documentation will be available at [http://localhost:8000/docs](http://localhost:8000/docs).
-
-#### 2. Frontend Development Setup
-Run the client from the repository root:
-```bash
-# Install frontend dependencies
-npm install
-
-# Start Vite hot-reloading development server
-npm run dev
-```
-Open [http://localhost:5173/](http://localhost:5173/) in your web browser.
+The smart launcher performs the following automatically:
+1. Detects a compatible Python interpreter (bypasses the Windows Store alias).
+2. Creates / updates the backend virtual environment (`backend/venv`).
+3. Installs backend dependencies (`pip install -r requirements.txt`).
+4. Installs frontend dependencies (`npm ci`).
+5. Runs any pending Alembic migrations and seeds the default admin/user accounts.
+6. Starts **FastAPI** on **port 8000**, a **Celery worker**, and the **Vite** dev server on **port 5173** concurrently.
 
 ---
 
-### Option B: Docker Orchestration Setup
+## 7. Containerised Deployment (Docker)
 
-You can build and spin up the complete architecture (PostgreSQL, Redis database caching, Celery background workers, FastAPI backend gateway, and React frontend) using a single command:
 ```bash
-# Navigate to the backend directory containing docker-compose.yml
-cd backend
-
-# Build and start the container cluster
 docker-compose up --build
 ```
+### Services Overview
+| Service | Port | Role |
+|---------|------|------|
+| **api** | 8000 | FastAPI backend (Uvicorn) |
+| **worker** | – | Celery worker processing async jobs |
+| **redis** | 6379 | Message broker for Celery |
+| **postgres** | 5432 | Persistent relational store |
+| **frontend** | 80 | Nginx serving the compiled React app |
+
+The `docker/` directory contains production‑ready `Dockerfile`s and a `docker-compose.yml` that wires the services together.
 
 ---
 
-### Option C: Browser Extension Installation
+## 8. Default Credentials & Access URLs
+- **Web Dashboard**: `http://localhost:5173`
+- **API Swagger Docs**: `http://localhost:8000/docs`
 
-1. Open your browser and navigate to the extensions page (e.g., `chrome://extensions` in Google Chrome).
-2. Enable **Developer mode** using the toggle in the top-right corner.
-3. Click **Load unpacked** and select the `/extension` folder from this repository.
-4. Once loaded, you can verify links or images via the right-click context menu.
-
----
-
-## 🔑 Default Seed Credentials
-
-Upon database initialization, the backend automatically seeds the database with the following default accounts if they do not exist:
-
-| Role | Default Email | Password | Accessible Workspace |
-| :--- | :--- | :--- | :--- |
-| **System Administrator** | `admin@example.com` | `AdminPass123!` (or `password`*) | Admin Operations Control Center (`/admin`) |
-| **Standard User** | `user@example.com` | `UserPass123!` | User Verification Workspace (`/dashboard`) |
-| **Legacy Test User** | `test@example.com` | `password`* | User Verification Workspace (`/dashboard`) |
-
-*\*Available if database was initialized using the legacy `seed_creds.py` script.*
+### Pre‑seeded Test Accounts
+| Role | Email | Password |
+|------|-------|----------|
+| **System Admin** | `admin@example.com` | `AdminPass123!` |
+| **Standard User** | `user@example.com` | `UserPass123!` |
 
 ---
 
-## ⚙️ Environment Configuration Reference
+## 9. Environment Variables & Configuration
+Create a `.env` file in the project root (backend) and a `.env.development` / `.env.production` in the `frontend/` folder.
 
-The backend uses the following environment variables. Set these in `backend/.env`:
-
-| Key | Default Value | Description |
-| :--- | :--- | :--- |
-| `APP_NAME` | `Deepfake & Phishing Media Verification Gateway` | The application name displayed in Swagger docs and UI headers. |
-| `APP_ENV` | `development` | Runtime environment mode: `development`, `staging`, or `production`. |
-| `DEBUG` | `true` | Enables auto-reload and database creation schemas when true. |
-| `SECRET_KEY` | `change-me-to-a-long-random-secret-key-in-production` | Secret signature key for JWT authentication hashing. |
-| `DATABASE_URL` | `sqlite+aiosqlite:///./deepguard_db.sqlite` | Async connection string for SQLAlchemy engine. |
-| `SYNC_DATABASE_URL` | `sqlite:///./deepguard_db.sqlite` | Synchronous database connection string (used for sync engines). |
-| `REDIS_URL` | `redis://localhost:6379/0` | Cache/broker URL for Redis database key-value storage. |
-| `CELERY_BROKER_URL` | `redis://localhost:6379/0` | Messaging queue connection broker for asynchronous task delivery. |
-| `CELERY_RESULT_BACKEND` | `redis://localhost:6379/1` | Redis database storage index dedicated to storing Celery results. |
-| `ACCESS_TOKEN_EXPIRE_MINUTES` | `60` | Lifecycle lifespan of access tokens in minutes. |
-| `MAX_UPLOAD_SIZE_MB` | `100` | Maximum allowable payload size for uploaded media files. |
-| `ALLOWED_MIME_TYPES` | `image/jpeg,image/png,image/webp,audio/wav,...` | List of allowed MIME types. |
-| `USE_MOCK_MODELS` | `true` | Set to `false` only if PyTorch model weights are downloaded. |
-| `VIRUSTOTAL_API_KEY` | `""` | Integration key for URL reputation lookups. |
-| `GOOGLE_SAFE_BROWSING_KEY` | `""` | Key used to run Safe Browsing domain lookups. |
-| `WEBAUTHN_RP_ID` | `localhost` | Relaying Party ID for WebAuthn passkey operations. |
-| `WEBAUTHN_ORIGIN` | `http://localhost:5173` | Client origin matching the browser's current address during WebAuthn checks. |
-| `CORS_ORIGINS` | `http://localhost:5173,http://localhost:3000` | Whitelisted cross-origin domains. |
-
----
-
-## ⚡ API Reference & WebSocket Protocols
-
-Below is a summary of the core API routes.
-
-### REST Endpoints
-* **Authentication**:
-  * `POST /api/v1/auth/register` — Create a new user account.
-  * `POST /api/v1/auth/login` — Sign in and receive JWT access/refresh tokens.
-  * `POST /api/v1/auth/refresh` — Refresh expired access tokens using a valid refresh token.
-* **Media Verification**:
-  * `POST /api/v1/scan/file` — Upload a file (image, audio, video, or PDF) for processing.
-  * `POST /api/v1/scan/url` — Scan a URL for phishing indicator metrics.
-  * `POST /api/v1/scan/batch` — Upload a ZIP file containing multiple assets for parallel scan scheduling.
-  * `GET /api/v1/scan/history` Paginated search history records for the current user.
-* **Admin Dashboard Control**:
-  * `GET /api/v1/admin/stats` — Global metrics on scanned files, threat percentages, and error rates.
-  * `GET /api/v1/admin/users` — List and filter registered users.
-  * `PUT /api/v1/admin/users/{user_id}/quota` — Modify a user's subscription tier and upload volume quotas.
-
-### Real-Time WebSocket Protocols
-* **WebSocket Scan Monitor**: `WS /api/v1/ws/scans/{job_id}`
-  * Streams real-time processing updates for active scans (e.g., `{"status": "PROCESSING", "progress": 50}`).
-* **WebSocket Admin Threat Stream**: `WS /api/v1/ws/alerts`
-  * Channels live threat broadcasts (e.g., `{"severity": "critical", "message": "Threat detected: phishing-url.com"}`).
-
----
-
-## 🧪 Testing & QA Suite
-
-DeepGuard includes a pytest suite that runs unit and integration tests against local configurations:
-
-```bash
-# Navigate to the backend directory
-cd backend
-
-# Execute test suite and output test coverage report
-.\venv\Scripts\pytest --cov=app tests/
+### Backend (`.env`)
+```dotenv
+# FastAPI
+HOST=0.0.0.0
+PORT=8000
+# Database (Postgres)
+DATABASE_URL=postgresql+asyncpg://deepguard:deepguard@postgres:5432/deepguard
+# Redis broker for Celery
+REDIS_URL=redis://redis:6379/0
+# Model paths
+SPATIAL_MODEL_PATH=backend/weights/dual_stream_effb4.pt
+# Feature flags
+USE_MOCK_MODELS=False
+DEEPFAKE_CLASS_INDEX=1
+# Security
+SECRET_KEY=super‑secret‑key‑change‑me
 ```
 
-Tests validate a range of functionality, including:
-* **Engine Correctness**: FFT calculations, typosquatting evaluation distances, and WAV phase checks.
-* **API Gateways**: Multi-part mock file processing, authentication guards, and validation schemas.
-* **WebSockets**: Live state notifications and WebSocket broadcasts.
+### Frontend (`frontend/.env.development`)
+```dotenv
+VITE_API_URL=http://localhost:8000
+VITE_WS_URL=ws://localhost:8000/ws
+```
+Adjust the values for production as needed.
 
 ---
 
-## 🤝 Contributing & License
+## 10. Project Structure
+```
+DeepfakeandPhishingMediaVerificationsystem/
+├─ backend/                         # FastAPI backend
+│  ├─ app/
+│  │  ├─ api/                      # Route definitions (v1/scan.py, …)
+│  │  ├─ core/                     # Config, security, utilities
+│  │  ├─ db/                       # SQLAlchemy models & session
+│  │  ├─ ml_models/                # Vision, audio, text model wrappers
+│  │  ├─ services/                 # Orchestrator, engines, Celery tasks
+│  │  └─ schemas/                  # Pydantic request/response models
+│  ├─ requirements.txt
+│  ├─ start.py                     # Python launcher (env‑aware)
+│  └─ start.bat                    # Windows batch launcher
+├─ frontend/                        # Vite React workspace
+│  ├─ src/
+│  ├─ public/
+│  ├─ vite.config.ts
+│  └─ package.json
+├─ docker/                          # Production Dockerfiles & compose
+│  ├─ Dockerfile.api
+│  ├─ Dockerfile.worker
+│  └─ docker-compose.yml
+├─ data/                            # Optional local dataset folder
+├─ weights/                         # Trained model checkpoints
+├─ scripts/                         # Helper utilities, training scripts
+├─ .gitignore
+├─ README.md                       # ← **This file**
+└─ pyproject.toml / setup.cfg (if any)
+```
 
-Contributions from open-source security professionals and developers are welcome. Please refer to [CONTRIBUTING.md](file:///c:/Users/Acer/Documents/3rd/3rd%20project/DeepfakeandPhishingMediaVerificationsystem/CONTRIBUTING.md) for style guides, linting standards (`oxlint`), and merge strategies.
+---
 
-This project is licensed under the terms of the MIT License. See [LICENSE](file:///c:/Users/Acer/Documents/3rd/3rd%20project/DeepfakeandPhishingMediaVerificationsystem/LICENSE) for details.
+## 11. Contributing
+1. Fork the repository and create a feature branch.
+2. Follow the coding style enforced by `ruff` and `black` (run `pre‑commit install`).
+3. Add unit & integration tests for new functionality.
+4. Open a Pull Request targeting `main`.  CI will run linting, test suites, and a Docker build verification.
+
+---
+
+## 12. License
+This project is licensed under the **MIT License**. See the `LICENSE` file for full terms.
+
+---
+
+*Documentation generated by Antigravity AI – your partner for modern, production‑grade codebases.*
