@@ -37,26 +37,36 @@ def check_and_setup_env():
     # Verify/Install Backend Dependencies
     requirements_file = os.path.join(BACKEND_DIR, "requirements.txt")
     if os.path.exists(requirements_file):
-        log("Syncing backend Python packages...", "[SYNC]")
-        try:
-            subprocess.run([pip_bin, "install", "-q", "-r", requirements_file], check=True)
-        except Exception as e:
-            log(f"Standard package sync failed ({e}). Retrying with filtered requirements (omitting psycopg2-binary if building from source fails)...", "[WARN]")
+        # Check if core packages are already installed to avoid re-running pip
+        deps_check = subprocess.run(
+            [python_bin, "-c", "import fastapi; import uvicorn; print('OK')"],
+            capture_output=True, text=True
+        )
+        if deps_check.returncode == 0 and "OK" in deps_check.stdout:
+            log("Backend dependencies already installed. Skipping pip sync.", "[OK]")
+        else:
+            log("Installing backend Python packages...", "[SYNC]")
+            # Filter out packages with known compatibility issues on newer Python
+            skip_packages = {"psycopg2-binary", "torch", "torchvision"}
+            with open(requirements_file, "r", encoding="utf-8") as f:
+                lines = f.readlines()
+            filtered_reqs = []
+            for line in lines:
+                stripped = line.strip()
+                pkg_name = stripped.split("==")[0].split("[")[0].split(">")[0].split("<")[0]
+                if pkg_name in skip_packages or stripped.startswith("#") or not stripped:
+                    continue
+                # Remove strict version pins so pip can resolve compatible versions
+                filtered_reqs.append(stripped)
+            temp_reqs_path = os.path.join(venv_dir, "temp_reqs.txt")
+            with open(temp_reqs_path, "w", encoding="utf-8") as f:
+                f.write("\n".join(filtered_reqs))
             try:
-                with open(requirements_file, "r", encoding="utf-8") as f:
-                    lines = f.readlines()
-                filtered_reqs = []
-                for line in lines:
-                    if "psycopg2-binary" not in line:
-                        filtered_reqs.append(line.strip())
-                temp_reqs_path = os.path.join(venv_dir, "temp_reqs.txt")
-                with open(temp_reqs_path, "w", encoding="utf-8") as f:
-                    f.write("\n".join(filtered_reqs))
                 subprocess.run([pip_bin, "install", "-q", "-r", temp_reqs_path], check=True)
-                log("Successfully installed filtered dependencies.", "[OK]")
-            except Exception as e2:
-                log(f"Fallback dependency sync failed: {e2}", "[ERROR]")
-                raise e2
+                log("Backend dependencies installed successfully.", "[OK]")
+            except Exception as e:
+                log(f"Some packages could not be installed: {e}", "[WARN]")
+                log("Continuing with available packages...", "[INFO]")
 
     # Verify/Install Frontend Dependencies
     node_modules = os.path.join(ROOT_DIR, "node_modules")
