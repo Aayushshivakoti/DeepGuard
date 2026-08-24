@@ -7,9 +7,24 @@ Provides real-time streaming updates for:
 """
 from __future__ import annotations
 
-import json
-import asyncio
+from fastapi import HTTPException, Query, status
+import jwt
+from app.core.config import settings
 from typing import Dict, List
+import asyncio
+def verify_jwt_token(token: str):
+        """Validate JWT token and return payload or raise HTTPException."""
+        if not token:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Missing JWT token")
+        try:
+            # Expect token format "Bearer <jwt>"
+            if token.lower().startswith("bearer "):
+                token = token[7:]
+            payload = jwt.decode(token, settings.JWT_SECRET, algorithms=[settings.JWT_ALGORITHM])
+            return payload
+        except jwt.PyJWTError as e:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid JWT token")
+
 
 import structlog
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
@@ -87,11 +102,17 @@ ws_manager = ConnectionManager()
 # ─── WebSocket Endpoints ───────────────────────────────────────────────────────
 
 @router.websocket("/scans/{job_id}")
-async def websocket_scan_status(websocket: WebSocket, job_id: str):
+async def websocket_scan_status(websocket: WebSocket, job_id: str, token: str = Query(...)):
     """
     WebSocket endpoint for streaming updates on a specific background scan job.
     Bridges Celery Redis results to WebSocket connections.
     """
+    # Verify JWT before accepting connection
+    try:
+        verify_jwt_token(token)
+    except HTTPException:
+        await websocket.close(code=1008)
+        return
     await ws_manager.connect_scan(job_id, websocket)
     try:
         last_state = None
@@ -151,10 +172,16 @@ async def websocket_scan_status(websocket: WebSocket, job_id: str):
 
 
 @router.websocket("/alerts")
-async def websocket_admin_alerts(websocket: WebSocket):
+async def websocket_admin_alerts(websocket: WebSocket, token: str = Query(...)):
     """
     WebSocket endpoint for real-time threat feed updates (admin view).
     """
+    # Verify JWT before accepting connection
+    try:
+        verify_jwt_token(token)
+    except HTTPException:
+        await websocket.close(code=1008)
+        return
     await ws_manager.connect_admin(websocket)
     try:
         while True:

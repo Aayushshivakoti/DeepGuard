@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "start": "start.bat",
-    "dev": "start.bat",
+    "dev": "vite --host 0.0.0.0",
     "build": "vite build",
     "lint": "oxlint",
     "preview": "vite preview"
@@ -20,7 +20,8 @@
     "react-dropzone": "^20.1.0",
     "react-router-dom": "^7.18.2",
     "recharts": "^3.10.1",
-    "tailwindcss": "^4.3.3"
+    "tailwindcss": "^4.3.3",
+    "html2canvas": "^1.4.1"
   },
   "devDependencies": {
     "@types/react": "^19.2.17",

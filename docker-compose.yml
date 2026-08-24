@@ -19,6 +19,7 @@ services:
 
   redis:
     image: redis:7-alpine
+    command: redis-server --requirepass ${REDIS_PASSWORD:-defaultpass}
     container_name: deepguard_redis
     restart: always
     ports:
@@ -41,7 +42,8 @@ services:
       DATABASE_URL: postgresql+asyncpg://postgres:postgrespassword@db:5432/deepguard_db
       SYNC_DATABASE_URL: postgresql://postgres:postgrespassword@db:5432/deepguard_db
       REDIS_URL: redis://redis:6379/0
-      SECRET_KEY: production-super-secret-key-deepguard-gateway
+      SECRET_KEY: change-me-to-a-long-random-secret-key-in-production
+      JWT_SECRET: CHANGE_ME_SECRET
       APP_ENV: production
       DEBUG: "false"
     ports:
@@ -52,10 +54,31 @@ services:
       redis:
         condition: service_healthy
 
+  celery_worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: deepguard_celery
+    restart: always
+    command: celery -A app.core.celery_app worker --loglevel=info
+    environment:
+      DATABASE_URL: postgresql+asyncpg://postgres:postgrespassword@db:5432/deepguard_db
+      SYNC_DATABASE_URL: postgresql://postgres:postgrespassword@db:5432/deepguard_db
+      REDIS_URL: redis://redis:6379/0
+      APP_ENV: production
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
   frontend:
     build:
       context: .
       dockerfile: frontend/Dockerfile
+      args:
+        VITE_API_URL: http://localhost:8000/api/v1
+        VITE_WS_URL: localhost:8000/api/v1/ws
     container_name: deepguard_frontend
     restart: always
     ports:

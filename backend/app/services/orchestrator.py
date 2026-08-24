@@ -21,7 +21,7 @@ from typing import Optional
 import structlog
 import anyio
 
-from app.schemas.scan import ForensicFlag, VerificationResponse
+from app.schemas.scan import ForensicFlag, VerificationResponse, VerdictType
 from app.services.phishing_engine import (
     analyze_file_metadata,
     analyze_pdf,
@@ -149,6 +149,9 @@ async def dispatch_file_scan(
                 "ensemble_weights": weights,
             },
             processing_time_ms=int((time.perf_counter() - t_start) * 1000),
+            spatial_confidence=result.confidence,
+            frequency_artifact_score=None,
+            overall_verdict=verdict,
         )
 
     elif engine_type == "audio":
@@ -186,6 +189,9 @@ async def dispatch_file_scan(
                 "ensemble_weights": weights,
             },
             processing_time_ms=int((time.perf_counter() - t_start) * 1000),
+            spatial_confidence=None,
+            frequency_artifact_score=None,
+            overall_verdict=verdict,
         )
 
     elif engine_type == "video":
@@ -232,6 +238,9 @@ async def dispatch_file_scan(
                 "rppg_waveform": getattr(result, "rppg_waveform", []),
             },
             processing_time_ms=int((time.perf_counter() - t_start) * 1000),
+            spatial_confidence=None,
+            frequency_artifact_score=None,
+            overall_verdict=verdict,
         )
 
     elif engine_type == "pdf":
@@ -278,6 +287,9 @@ async def dispatch_file_scan(
                 "ensemble_weights": weights,
             },
             processing_time_ms=int((time.perf_counter() - t_start) * 1000),
+            spatial_confidence=None,
+            frequency_artifact_score=None,
+            overall_verdict=verdict,
         )
 
     elif engine_type == "email":
@@ -310,6 +322,9 @@ async def dispatch_file_scan(
                 "email_analysis": email_res,
             },
             processing_time_ms=int((time.perf_counter() - t_start) * 1000),
+            spatial_confidence=None,
+            frequency_artifact_score=None,
+            overall_verdict=verdict,
         )
 
     elif engine_type == "text":
@@ -345,6 +360,9 @@ async def dispatch_file_scan(
                 "text_detector": text_res,
             },
             processing_time_ms=int((time.perf_counter() - t_start) * 1000),
+            spatial_confidence=None,
+            frequency_artifact_score=None,
+            overall_verdict=verdict,
         )
 
     else:
@@ -360,6 +378,9 @@ async def dispatch_file_scan(
                 description=f"MIME type '{mime_type}' is not directly supported. Manual review recommended.",
             )],
             processing_time_ms=int((time.perf_counter() - t_start) * 1000),
+            spatial_confidence=None,
+            frequency_artifact_score=None,
+            overall_verdict="SUSPICIOUS",
         )
 
 
@@ -441,6 +462,9 @@ def _build_response(
     heatmap_available: bool = False,
     engine_metadata: Optional[dict] = None,
     model_version: str = "DeepGuard-v3.1",
+    spatial_confidence: Optional[float] = None,
+    frequency_artifact_score: Optional[float] = None,
+    overall_verdict: Optional[VerdictType] = None,
 ) -> VerificationResponse:
     """Build a standardised VerificationResponse."""
     meta = engine_metadata or {}
@@ -465,5 +489,8 @@ def _build_response(
         simple_summary=simple_summary,
         processing_time_ms=processing_time_ms,
         model_version=model_version,
+        spatial_confidence=spatial_confidence,
+        frequency_artifact_score=frequency_artifact_score,
+        overall_verdict=overall_verdict if overall_verdict is not None else verdict,
         timestamp=datetime.now(timezone.utc),
     )

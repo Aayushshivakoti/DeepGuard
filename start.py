@@ -83,10 +83,23 @@ def launch_services(venv_py):
         # 1. Backend API (FastAPI)
         print("Starting FastAPI Backend (Port 8000)...")
         p_backend = subprocess.Popen(
-            [uvicorn_bin, "main:app", "--reload", "--port", "8000", "--workers", "1"],
+            [uvicorn_bin, "main:app", "--reload", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"],
             cwd=BACKEND_DIR, env=env, shell=(sys.platform == "win32")
         )
         processes.append(p_backend)
+
+        # 1.5 Celery Worker (Optional)
+        print("Starting Celery Worker (Solo Pool)...")
+        celery_bin = os.path.join(bin_dir, "celery")
+        if os.path.exists(celery_bin) or os.path.exists(celery_bin + ".exe"):
+            try:
+                p_celery = subprocess.Popen(
+                    [celery_bin, "-A", "app.core.celery_app", "worker", "--loglevel=info", "-c", "1", "--pool=solo"],
+                    cwd=BACKEND_DIR, env=env, shell=(sys.platform == "win32")
+                )
+                processes.append(p_celery)
+            except Exception as e:
+                print(f"⚠️ Notice: Could not start Celery ({e})")
 
         # 2. Frontend React Client
         print("Starting Vite Frontend (Port 5173)...")

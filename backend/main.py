@@ -41,11 +41,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:  # noqa: ARG001
     configure_logging()
     log.info("deepguard.startup", env=settings.APP_ENV, debug=settings.DEBUG)
 
-    # Create all DB tables if they don't exist (use Alembic for prod migrations)
+    # Database tables should be initialized via Alembic migrations or init_db.py, not here.
     if settings.DEBUG:
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
-        log.info("deepguard.db.tables_created")
+        log.info("deepguard.db.tables_check_skipped")
         
     # Seed default Admin and Standard User credentials if they do not exist
     from app.db.init_db import seed_users

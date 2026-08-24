@@ -33,7 +33,7 @@ export function useScan() {
       try {
         await new Promise((resolve, reject) => {
           const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-          const wsUrl = `${protocol}//localhost:8000/api/v1/ws/scans/${jobId}`;
+          const wsUrl = `${protocol}//${import.meta.env.VITE_WS_URL || 'localhost:8000/api/v1/ws'}/scans/${jobId}`;
           const socket = new WebSocket(wsUrl);
           let hasEnded = false;
 
@@ -153,7 +153,7 @@ export function useScan() {
       try {
         await new Promise((resolve, reject) => {
           const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-          const wsUrl = `${protocol}//localhost:8000/api/v1/ws/scans/${jobId}`;
+          const wsUrl = `${protocol}//${import.meta.env.VITE_WS_URL || 'localhost:8000/api/v1/ws'}/scans/${jobId}`;
           const socket = new WebSocket(wsUrl);
           let hasEnded = false;
 

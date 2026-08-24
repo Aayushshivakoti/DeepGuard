@@ -41,6 +41,9 @@ class VerificationResponse(BaseModel):
     id: str = Field(..., description="Unique scan result UUID")
     verdict: VerdictType = Field(..., description="Final forensic verdict")
     confidence: float = Field(..., ge=0.0, le=100.0, description="Confidence percentage (0-100)")
+    spatial_confidence: Optional[float] = Field(None, ge=0.0, le=100.0, description="Spatial RGB model confidence")
+    frequency_artifact_score: Optional[float] = Field(None, ge=0.0, le=100.0, description="Frequency domain artifact score")
+    overall_verdict: Optional[VerdictType] = Field(None, description="Final verdict after thresholds")
     media_type: MediaType = Field(..., description="Type of scanned media")
 
     # ── Identifiers ────────────────────────────────────────────────────────────
@@ -51,6 +54,7 @@ class VerificationResponse(BaseModel):
     flags: List[ForensicFlag] = Field(default_factory=list, description="Forensic evidence flags")
     heatmap_b64: Optional[str] = Field(None, description="Base64-encoded PNG Grad-CAM heatmap")
     heatmap_available: bool = Field(default=False, description="Whether a heatmap was generated")
+    explainability_data: Optional[str] = Field(None, description="Base64-encoded XAI data (e.g., JSON summary)")
 
     # ── Engine Metadata & XAI Summary ─────────────────────────────────────────
     engine_metadata: Optional[dict] = Field(None, description="Per-engine raw analysis metadata")

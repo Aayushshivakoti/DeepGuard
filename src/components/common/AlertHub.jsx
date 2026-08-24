@@ -24,7 +24,7 @@ export default function AlertHub({ isOpen, onClose }) {
 
     // 2. Register WebSockets listener for real-time security alerts
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${protocol}//localhost:8000/api/v1/ws/alerts`;
+    const wsUrl = `${protocol}//${import.meta.env.VITE_WS_URL || 'localhost:8000/api/v1/ws'}/alerts`;
     
     socketRef.current = new WebSocket(wsUrl);
 

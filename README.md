@@ -1,208 +1,354 @@
 # DeepGuard — Multi-Modal Deepfake & Phishing Media Verification Platform
 
-## 1. Project Overview & Highlights
+## 1. Project Overview
+DeepGuard delivers high-accuracy AI verification for images, audio, video, PDFs, and URLs. Its core mission is to eliminate false-positives on authentic smartphone photos by fusing spatial-RGB and frequency-spectral analyses.
 
-**DeepGuard** is a high‑accuracy AI‑driven platform that verifies images, audio, video, PDFs and URLs for deepfakes and phishing content.  The system is engineered to **eliminate false‑positives on real photographs** by leveraging a novel **dual‑stream spatial‑frequency architecture** that fuses semantic RGB cues with spectral fingerprint analysis.
+## 2. Detailed Algorithm Architecture
+### The False-Positive Challenge
+Standard RGB-only CNNs misinterpret sensor noise and compression artifacts as generative cues, especially on uncompressed or phone-taken images, causing systematic misclassifications.
 
----
+### Spatial Feature Stream
+- **Model**: EfficientNet-B4 (or ConvNeXt) backbone.
+- **Function**: Extracts semantic patterns, detects lighting inconsistencies, edge-blending anomalies, and anatomical defects.
 
-## 2. Detailed Algorithms & Technical Design (Why & How)
+### Frequency Feature Stream
+- **Algorithms**: 2-D Fast Fourier Transform (FFT) and Error Level Analysis (ELA).
+- **Function**: Generates high-frequency magnitude maps and compression-variance visualisations to expose periodic up-sampling grids left by GANs, diffusion models, Flux, and Midjourney that are invisible in RGB space.
 
-### Dual‑Stream Fusion Architecture
-Real‑world smartphone photos differ dramatically from the clean, often down‑sampled images used to train naïve RGB‑only classifiers.  Camera‑sensor noise, compression artifacts, and lighting variations cause a classic single‑stream CNN to mis‑classify authentic images as AI‑generated (domain‑shift).  By **combining a spatial stream with a frequency stream**, DeepGuard learns both high‑level semantic features *and* the subtle high‑frequency patterns that generative models imprint on their outputs.
+### Fusion & Calibration Head
+- **Fusion**: Concatenates spatial and frequency embeddings.
+- **Calibration**: Applies temperature scaling (Platt) and trains with focal loss plus label smoothing, producing statistically reliable probabilities.
 
-### Spatial Stream (Backbone)
-- **Algorithm**: EfficientNet‑B4 (or ConvNeXt) fine‑tuned for a 2‑class problem (Authentic vs Deepfake).
-- **Mechanics**: Extracts semantic representations, detects lighting inconsistencies, facial boundary blending artefacts, and structural anatomical flaws.  The backbone is frozen on ImageNet weights and then trained on the fused dataset.
+### Dynamic Decision Boundaries
+- **Real**: probability < 40%.
+- **Uncertain**: 40% - 85% (recommend manual review).
+- **AI-Generated**: > 85%.
+These thresholds replace a rigid 0.5 cutoff.
 
-### Frequency Stream (Spectral Fingerprinting)
-- **Algorithms**: 2‑D Fast Fourier Transform (FFT) and Error Level Analysis (ELA).
-- **Mechanics**: Computes the magnitude spectrum of the RGB image, producing a high‑frequency map that reveals periodic grid‑like artefacts left by GAN up‑samplers and diffusion pipelines.  ELA highlights compression‑level differences that are invisible in the RGB domain.
+## 3. Model Training & Dataset Pipeline
+### Multi-Domain Dataset Blending
+- **Real Images**: Flickr, COCO, and raw smartphone collections covering varied lighting, ISO levels, and social-media re-uploads.
+- **Synthetic Images**: Midjourney (v4-v6), Stable Diffusion (1.5, XL, 3), DALL-E 3, Flux 1, StyleGAN variants.
 
-### Feature Fusion & Calibration Head
-- **Fusion**: Concatenates the spatial feature vector (≈1280 dims) with the frequency feature vector (matched dimension via a lightweight CNN).
-- **Calibration**: Applies temperature scaling (Platt scaling) and trains with **Focal Loss** + **Label Smoothing** to avoid over‑confidence on noisy real photos.
-- **Decision Logic**:
-  - **Real**: probability < **40 %**
-  - **Uncertain**: **40 % – 85 %** (suggest manual review)
-  - **AI‑Generated**: > **85 %**
-
----
-
-## 3. Model Training & Pipeline Datasets
-
-### Multi‑Domain Dataset Integration
-- **Real Images**: Flickr, COCO, and a curated collection of raw smartphone photos (varied lighting, ISO, motion blur).
-- **AI‑Generated Images**: Midjourney (v4‑v6), Stable Diffusion (1.5, XL, 3), DALL‑E 3, Flux.1, StyleGAN, and other public diffusion/GAN repos.
-
-### Noise Augmentation Pipeline (Albumentations)
+### On-The-Fly Noise Augmentation (Albumentations)
 ```python
 import albumentations as A
-
 transform = A.Compose([
     A.Resize(380, 380),
     A.RandomCrop(350, 350),
     A.Resize(380, 380),
-    A.JpegCompression(quality_lower=30, quality_upper=95),
-    A.GaussNoise(var_limit=(10.0, 50.0)),
-    A.MotionBlur(p=0.2),
-    A.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1),
+    A.JpegCompression(30, 95),
+    A.GaussNoise(10, 50),
+    A.MotionBlur(0.2),
+    A.ColorJitter(0.2, 0.2, 0.2, 0.1),
     A.Normalize(mean=(0.485,0.456,0.406), std=(0.229,0.224,0.225)),
     A.pytorch.transforms.ToTensorV2(),
 ])
 ```
-The augmentation forces the model to learn **invariant forgery fingerprints** rather than mistaking ordinary camera noise for AI artefacts.
+These augmentations force the model to focus on genuine generative artifacts rather than ordinary camera noise.
 
----
+## 4. High-Level System Architecture
+```mermaid
+graph TD
+    UI[User Client<br/>Vite React Dashboard] -->|REST API & WebSockets| API[API Gateway / Router<br/>FastAPI Backend]
+    API -->|Enqueues Job| Broker[Message Broker<br/>Redis]
+    Broker -->|Dispatches Task| Worker[Async Task Queue<br/>Celery Worker Node]
+    
+    subgraph ML_Pipeline [ML Pipeline Engine]
+        Worker -->|Image Tensor| Spatial[Stream A:<br/>Spatial RGB Backbone<br/>EfficientNet / ConvNeXt]
+        Worker -->|Image Tensor| Freq[Stream B:<br/>Frequency Spectrum Analyzer<br/>2D FFT + ELA]
+        Spatial --> Fusion[Decision Fusion Head]
+        Freq --> Fusion
+    end
+    
+    Fusion -->|Saves Results| DB[(Primary Database<br/>PostgreSQL / SQLite via SQLAlchemy)]
+    API <-->|Reads/Writes| DB
+```
 
-## 4. Architecture & Multi‑Process Stack
+## 5. End-to-End Media Scan Workflow
+```mermaid
+sequenceDiagram
+    participant Client as React Dashboard
+    participant API as FastAPI Backend
+    participant Redis as Redis Queue
+    participant Worker as Celery Worker
+    participant ML as Dual-Stream ML Engine
+    participant DB as Database
 
-- **FastAPI (Async)** – Primary HTTP API, authentication, and Swagger UI.
-- **Celery + Redis** – Background processing for large files, video/audio jobs, and batch ZIP scans.
-- **PostgreSQL** – Persistent storage of scan results, user accounts, and audit logs.
-- **Vite + React** – Modern, highly‑responsive dashboard for uploads, visual heatmaps (Grad‑CAM), and detailed forensic reports.
-- **Nginx (optional)** – Serves the compiled frontend in production and proxies to the FastAPI backend.
+    Client->>API: POST /api/v1/scan/upload (Raw Media Payload)
+    API->>API: Validate file headers & compute SHA-256 hash
+    API->>API: Save raw payload
+    API->>Redis: Dispatch async job to Redis queue
+    API-->>Client: Return Job ID immediately
+    Client->>API: Open WebSocket (ws://localhost:8000/ws/scans/{job_id})
+    Redis->>Worker: Worker picks up job
+    Worker->>ML: Pass image tensor through ML Engine
+    par Dual-Stream Analysis
+        ML->>ML: Stream A: Spatial RGB Backbone
+        ML->>ML: Stream B: Frequency Spectrum Analyzer
+    end
+    ML->>ML: Decision Fusion Head (Calibrate metrics)
+    ML-->>Worker: spatial_confidence, frequency_artifact_score, overall_verdict
+    Worker->>DB: Save Results to Database
+    Worker->>API: Push completion payload via WebSocket
+    API-->>Client: Real-time UI update with forensic visual breakdown
+```
 
----
+## 6. Data Flow & Transformation Map
+- **Raw File Upload** → **Preprocessed RGB Tensor** (Normalized ImageNet range `[0.0, 1.0]`).
+- **Spatial Extraction** → **High-level feature vectors** mapping semantic and anatomical structures.
+- **Frequency Extraction** → **2D FFT Magnitude Spectra** & **ELA variance maps** to expose periodic anomalies.
+- **Logits Calibration** → **Platt Scaling & Dynamic Decision Boundaries** (`<40%` Real, `40-85%` Uncertain, `>85%` AI).
 
-## 5. Prerequisites
+## 16. Security & Authentication (New)
 
+### WebSocket JWT Protection
+- All real‑time channels (`/ws/scans/{job_id}` and `/ws/admin/alerts`) now require a **signed JWT** in the `Authorization: Bearer <token>` header.
+- The token is verified by `backend/app/core/security.py` using the `JWT_SECRET` environment variable.
+- Invalid or missing tokens cause the server to close the socket with WebSocket code **1008** (policy violation).
+
+### Environment Variables
+| Variable | Description | Default / Example |
+|----------|-------------|-------------------|
+| `JWT_SECRET` | Secret key used to sign/verify JWTs (must be a strong 256‑bit string). | `super-secret-256bit-key` |
+| `REDIS_URL` | Redis connection string (includes password). | `redis://redis:6379/0` |
+| `REDIS_PASSWORD` | Password used by the Redis container (`docker‑compose.yml`). | `defaultpass` |
+| `RATE_LIMIT_REDIS_URL` | Optional separate Redis instance for rate‑limit data. | `redis://redis:6379/1` |
+
+> **Note:** The `RateLimitMiddleware` now falls back to an in‑memory store if the Redis connection fails, guaranteeing uninterrupted operation.
+
+## 7. System State Transition Diagram
+```mermaid
+stateDiagram-v2
+    [*] --> IDLE
+    IDLE --> UPLOADING : Client initiates upload
+    UPLOADING --> QUEUED : File validated & dispatched to Redis
+    QUEUED --> PROCESSING_SPATIAL : Celery worker begins Stream A
+    PROCESSING_SPATIAL --> PROCESSING_FREQUENCY : Stream A completed
+    PROCESSING_FREQUENCY --> CALIBRATING : Stream B completed
+    CALIBRATING --> COMPLETED : Fusion & DB save successful
+    CALIBRATING --> FAILED : Error during ML/DB operation
+    COMPLETED --> [*]
+    FAILED --> [*]
+```
+
+## 17. Explainable AI – Grad‑CAM Heat‑maps (New)
+
+The dual‑stream vision model now outputs a **Grad‑CAM heat‑map** (`heatmap_b64`) that visualises the regions most responsible for the AI‑generated verdict.
+
+### Backend
+- `backend/app/services/spatial_engine.py` computes the Grad‑CAM tensor after the spatial backbone and encodes it as a base‑64 PNG string.
+- The field is added to `ImageAnalysisResult` schema under `heatmap_b64`.
+
+### Frontend
+- **Component:** `frontend/src/components/HeatmapOverlay.jsx`  
+  Renders the base‑64 heat‑map on top of the original media using a CSS glass‑morphism overlay.
+- **Export:** `frontend/src/components/ExportReportButton.jsx` bundles the current UI (including the overlay) into a PDF using **`jspdf`** + **`html2canvas`**.
+
+> Users can now download a certified forensic report that contains both the numerical verdict and the visual explanation.
+
+## 8. Prerequisites & Environment Requirements
 | Component | Minimum Version |
 |-----------|-----------------|
-| **OS** | Windows 10+, macOS 12+, Linux (any distro) |
-| **Python** | 3.10 – 3.12 (strictly, to avoid Rust/C‑wheel compilation issues) |
-| **Node.js** | v18+ |
-| **Docker & Docker‑Compose** | Latest stable (optional, for containerised deployment) |
-| **Git** | Any recent version |
+| OS        | Windows 10+, macOS 12+, Linux |
+| Python    | 3.10 - 3.12 (strict) |
+| Node.js   | ≥ 18 |
+| Docker & Docker-Compose | latest (optional) |
+| Git       | any recent release |
 
----
+## 18. PDF Report Export (New)
 
-## 6. Quick‑Start Guide (Local Development)
+A new UI button **“Export Report”** appears on the scan results page.
 
-### Single‑Command Launch
+- Implemented in `ExportReportButton.jsx`.
+- Uses `jspdf` to create a PDF document and `html2canvas` to rasterise the DOM (including the Grad‑CAM overlay) into an image.
+- The generated PDF is automatically downloaded with the filename `DeepGuard_Report_<job_id>.pdf`.
+
+> The PDF is cryptographically hash‑signed on the backend (see `backend/app/services/report_service.py`) to guarantee integrity.
+
+## 9. Quick-Start Guide (Local Setup)
+### One-Command Launch
 ```cmd
-# Windows (double‑click or from PowerShell)
 start.bat
 ```
 or
 ```bash
-# Cross‑platform
 python start.py
 ```
-The smart launcher performs the following automatically:
-1. Detects a compatible Python interpreter (bypasses the Windows Store alias).
-2. Creates / updates the backend virtual environment (`backend/venv`).
-3. Installs backend dependencies (`pip install -r requirements.txt`).
-4. Installs frontend dependencies (`npm ci`).
-5. Runs any pending Alembic migrations and seeds the default admin/user accounts.
-6. Starts **FastAPI** on **port 8000**, a **Celery worker**, and the **Vite** dev server on **port 5173** concurrently.
+The launcher automatically:
+1. Detects a compatible Python interpreter.
+2. Creates/updates `backend/venv` and installs backend packages.
+3. Installs frontend dependencies under `node_modules`.
+4. Runs pending migrations and seeds default accounts.
+5. Starts FastAPI (port 8000), Celery worker, and Vite dev server (port 5173) in parallel.
 
----
+## 19. Async Non‑Blocking Uploads (New)
 
-## 7. Containerised Deployment (Docker)
+The previous `scan.py` endpoint synchronously read the whole multipart payload into memory.  
+It now streams the upload directly to Redis using **async generators**:
 
+```python
+async for chunk in request.stream():
+    await redis.publish("uploads", chunk)
+```
+- Reduces memory footprint for large video/audio files.
+- Enables immediate job‑ID response while the upload continues in the background.
+
+### How to Use
+```bash
+curl -X POST http://localhost:8000/api/v1/scan/upload \
+  -H "Content-Type: multipart/form-data" \
+  -F "file=@/path/to/video.mp4"
+```
+The client receives a `job_id` instantly and can open the WebSocket for real‑time progress.
+
+## 10. Docker Deployment
 ```bash
 docker-compose up --build
 ```
-### Services Overview
-| Service | Port | Role |
-|---------|------|------|
-| **api** | 8000 | FastAPI backend (Uvicorn) |
-| **worker** | – | Celery worker processing async jobs |
-| **redis** | 6379 | Message broker for Celery |
-| **postgres** | 5432 | Persistent relational store |
-| **frontend** | 80 | Nginx serving the compiled React app |
+**Active services**: API, Celery worker, Redis broker, PostgreSQL database, and Nginx-served frontend (port 80).
 
-The `docker/` directory contains production‑ready `Dockerfile`s and a `docker-compose.yml` that wires the services together.
+## 20. Celery Worker Tuning (New)
 
----
+Key performance knobs added to `backend/app/core/celery_app.py`:
 
-## 8. Default Credentials & Access URLs
-- **Web Dashboard**: `http://localhost:5173`
-- **API Swagger Docs**: `http://localhost:8000/docs`
+| Setting | Value | Reason |
+|---------|-------|--------|
+| `worker_prefetch_multiplier` | `1` | Guarantees one‑task‑at‑a‑time per worker, avoiding task pile‑up and memory spikes. |
+| `worker_concurrency` | `2` (default) – can be overridden via `CELERY_WORKER_CONCURRENCY` env var | Balances CPU usage with GPU inference latency. |
+| `task_acks_late = True` | – | Ensures tasks are re‑queued on worker crash. |
+| `worker_max_memory_per_child` | `500M` | Auto‑restarts a worker process once it exceeds 500 MiB, preventing OOM crashes. |
 
-### Pre‑seeded Test Accounts
-| Role | Email | Password |
-|------|-------|----------|
-| **System Admin** | `admin@example.com` | `AdminPass123!` |
-| **Standard User** | `user@example.com` | `UserPass123!` |
+These settings are now reflected in `docker-compose.yml` under the `celery_worker` service (`command: celery -A app.core.celery_app worker -l info -c 2`).
 
----
+## 11. Access URLs & Default Credentials
+- Dashboard: `http://localhost:5173`
+- API docs: `http://localhost:8000/docs`
+- **Admin** – `admin@example.com` / `AdminPass123!`
+- **User** – `user@example.com` / `UserPass123!`
 
-## 9. Environment Variables & Configuration
-Create a `.env` file in the project root (backend) and a `.env.development` / `.env.production` in the `frontend/` folder.
+## 21. Backend Dependencies (Updated)
 
+The `requirements.txt` now includes:
+
+```
+fastapi
+uvicorn
+pydantic
+redis
+celery
+pyjwt          # JWT creation / verification
+python-magic    # MIME type detection for uploads
+albumentations # Data‑augmentation pipeline used during training
+timm           # Access to pretrained vision models (e.g., EfficientNet‑B4)
+# … existing deps …
+```
+> Run `pip install -r requirements.txt` after pulling the latest changes.
+
+## 12. Environment Configuration
+Create a `.env` file at the repository root for the backend and a `.env.development` (or `.env.production`) inside `frontend/`.
 ### Backend (`.env`)
 ```dotenv
-# FastAPI
 HOST=0.0.0.0
 PORT=8000
-# Database (Postgres)
 DATABASE_URL=postgresql+asyncpg://deepguard:deepguard@postgres:5432/deepguard
-# Redis broker for Celery
 REDIS_URL=redis://redis:6379/0
-# Model paths
 SPATIAL_MODEL_PATH=backend/weights/dual_stream_effb4.pt
-# Feature flags
 USE_MOCK_MODELS=False
 DEEPFAKE_CLASS_INDEX=1
-# Security
-SECRET_KEY=super‑secret‑key‑change‑me
+SECRET_KEY=change-me-securely
 ```
-
 ### Frontend (`frontend/.env.development`)
 ```dotenv
 VITE_API_URL=http://localhost:8000
 VITE_WS_URL=ws://localhost:8000/ws
 ```
-Adjust the values for production as needed.
+Adjust values for production as needed.
 
----
+## 22. Frontend Dependencies (Updated)
 
-## 10. Project Structure
+Add the following libraries to `frontend/package.json`:
+
+```json
+{
+  "dependencies": {
+    "jspdf": "^2.5.1",
+    "html2canvas": "^1.4.1",
+    // … other existing deps …
+  }
+}
 ```
-DeepfakeandPhishingMediaVerificationsystem/
-├─ backend/                         # FastAPI backend
+Run `npm install` (or `yarn`) to make the **Export Report** button functional.
+
+## 13. Project Directory Structure
+```
+DeepGuard/
+├─ backend/
 │  ├─ app/
-│  │  ├─ api/                      # Route definitions (v1/scan.py, …)
-│  │  ├─ core/                     # Config, security, utilities
-│  │  ├─ db/                       # SQLAlchemy models & session
-│  │  ├─ ml_models/                # Vision, audio, text model wrappers
-│  │  ├─ services/                 # Orchestrator, engines, Celery tasks
-│  │  └─ schemas/                  # Pydantic request/response models
+│  │  ├─ api/          # FastAPI routers
+│  │  ├─ core/         # Config, security utilities
+│  │  ├─ db/           # SQLAlchemy models & session
+│  │  ├─ ml_models/    # Vision, audio, text wrappers
+│  │  ├─ services/     # Orchestrator, engines, Celery tasks
+│  │  └─ schemas/      # Pydantic request/response models
 │  ├─ requirements.txt
-│  ├─ start.py                     # Python launcher (env‑aware)
-│  └─ start.bat                    # Windows batch launcher
-├─ frontend/                        # Vite React workspace
+│  ├─ start.py
+│  └─ start.bat
+├─ frontend/
 │  ├─ src/
 │  ├─ public/
 │  ├─ vite.config.ts
 │  └─ package.json
-├─ docker/                          # Production Dockerfiles & compose
+├─ docker/
 │  ├─ Dockerfile.api
 │  ├─ Dockerfile.worker
 │  └─ docker-compose.yml
-├─ data/                            # Optional local dataset folder
-├─ weights/                         # Trained model checkpoints
-├─ scripts/                         # Helper utilities, training scripts
+├─ data/                # Optional local datasets
+├─ weights/             # Model checkpoints
+├─ scripts/             # Training utilities
 ├─ .gitignore
-├─ README.md                       # ← **This file**
+├─ README.md           # ← This file
 └─ pyproject.toml / setup.cfg (if any)
 ```
 
----
+## 23. Updated Architecture Flow (New Diagram)
 
-## 11. Contributing
+```mermaid
+graph TD
+    UI[User Dashboard<br/>Vite React] -->|REST API / WebSocket (JWT)|
+    WS[WebSocket (protected)]
+    API[FastAPI Backend] -->|Enqueue Job| Redis[Redis Broker (password protected)]
+    Redis -->|Dispatch| Celery[Celery Worker<br/>worker_prefetch_multiplier=1]
+    Celery -->|Run ML Pipeline| ML[Dual‑Stream Engine<br/>Grad‑CAM generation]
+    ML -->|heatmap_b64| UI
+    ML -->|Verdict & metadata| DB[(PostgreSQL)]
+    UI -->|Export PDF| Report[PDF Service (jsPDF + html2canvas)]
+```
+
+### Docker‑Compose (Updated)
+
+```yaml
+services:
+  redis:
+    image: redis:7
+    command: redis-server --requirepass ${REDIS_PASSWORD:-defaultpass}
+    environment:
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+  celery_worker:
+    command: celery -A app.core.celery_app worker -l info -c ${CELERY_WORKER_CONCURRENCY:-2}
+```
+Run the stack with:
+
+```bash
+docker-compose up --build
+```
+The container now starts Redis with password authentication and the Celery worker with the tuned concurrency settings.
+
+## 14. Contributing
 1. Fork the repository and create a feature branch.
-2. Follow the coding style enforced by `ruff` and `black` (run `pre‑commit install`).
-3. Add unit & integration tests for new functionality.
-4. Open a Pull Request targeting `main`.  CI will run linting, test suites, and a Docker build verification.
+2. Follow the coding style enforced by `ruff` and `black` (`pre-commit install`).
+3. Add unit and integration tests for new functionality.
+4. Open a Pull Request targeting `main`. CI will run linting, tests, and a Docker build verification.
 
----
-
-## 12. License
+## 15. License
 This project is licensed under the **MIT License**. See the `LICENSE` file for full terms.
-
----
-
-*Documentation generated by Antigravity AI – your partner for modern, production‑grade codebases.*

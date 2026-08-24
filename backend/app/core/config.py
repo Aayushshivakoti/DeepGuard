@@ -22,11 +22,14 @@ class Settings(BaseSettings):
     APP_ENV: str = "development"
     DEBUG: bool = True
 
+    """
     # ── Security ───────────────────────────────────────────────────────────────
     SECRET_KEY: str = "insecure-dev-secret-change-in-production"
+    JWT_SECRET: str = "CHANGE_ME_JWT_SECRET"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
     REFRESH_TOKEN_EXPIRE_DAYS: int = 30
     JWT_ALGORITHM: str = "HS256"
+"""
 
     # ── Password Policy ────────────────────────────────────────────────────────
     PASSWORD_MIN_LENGTH: int = 8
@@ -63,6 +66,7 @@ class Settings(BaseSettings):
     TEXT_MODEL_PATH: str = "gpt2"
     USE_MOCK_MODELS: bool = True
     ONNX_QUANTIZATION_MODE: str = "none"  # none | fp16 | int8
+    DEEPFAKE_CLASS_INDEX: int = 1  # Index of deepfake class in model output
 
     # ── Third-Party APIs ──────────────────────────────────────────────────────
     VIRUSTOTAL_API_KEY: str = ""

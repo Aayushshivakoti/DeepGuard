@@ -170,7 +170,8 @@ class DeepfakeVisionModel:
             output = self.model(tensor)
             # Backprop on deepfake class (index 1)
             self.model.zero_grad()
-            output[0, 1].backward()
+            idx = settings.DEEPFAKE_CLASS_INDEX if hasattr(settings, "DEEPFAKE_CLASS_INDEX") else 1
+            output[0, idx].backward()
 
             fwd_handle.remove()
             bwd_handle.remove()
@@ -211,7 +212,9 @@ class DeepfakeVisionModel:
         """Convert raw logits to deepfake probability (0-100)."""
         from scipy.special import softmax
         probs = softmax(logits[0])
-        deepfake_prob = float(probs[1]) * 100.0  # Index 1 = deepfake class
+        # Use configurable class index for deepfake probability
+        idx = settings.DEEPFAKE_CLASS_INDEX if hasattr(settings, "DEEPFAKE_CLASS_INDEX") else 1
+        deepfake_prob = float(probs[idx]) * 100.0
         return deepfake_prob, logits
 
     def _mock_predict(self, image_buffer: bytes) -> Tuple[float, np.ndarray]:
@@ -219,31 +222,10 @@ class DeepfakeVisionModel:
         Heuristic FFT-based mock prediction for development.
         Analyzes high-frequency energy ratio as a proxy for GAN artifacts.
         """
+        # Neutral mock prediction to avoid false positives when real model weights are unavailable.
+        # Returns a balanced 50/50 probability.
         try:
-            pil_image = Image.open(io.BytesIO(image_buffer)).convert("L")
-            img_arr = np.array(pil_image.resize((256, 256)), dtype=np.float32)
-
-            # 2D FFT spectral analysis
-            fft = np.fft.fft2(img_arr)
-            fft_shifted = np.fft.fftshift(fft)
-            magnitude = np.abs(fft_shifted)
-
-            h, w = magnitude.shape
-            cy, cx = h // 2, w // 2
-            radius = min(h, w) // 4
-
-            # High-frequency energy ratio
-            total_energy = magnitude.sum() + 1e-8
-            mask = np.zeros_like(magnitude, dtype=bool)
-            y, x = np.ogrid[:h, :w]
-            mask[(y - cy) ** 2 + (x - cx) ** 2 > radius ** 2] = True
-            high_freq_energy = magnitude[mask].sum()
-            hf_ratio = high_freq_energy / total_energy
-
-            # Map to deepfake probability
-            score = float(np.clip(hf_ratio * 200, 5, 95))
-            return score, np.array([[100 - score, score]], dtype=np.float32)
-
+            return 50.0, np.array([[50.0, 50.0]], dtype=np.float32)
         except Exception as e:
             log.warning("vision_model.mock_predict_failed", error=str(e))
             return 50.0, np.array([[50.0, 50.0]], dtype=np.float32)
