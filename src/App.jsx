@@ -65,14 +65,10 @@ export default function App() {
               <Route path="/verify/:report_hash" element={<PublicReportPage />} />
 
               {/* Protected User Routes */}
-              <Route
-                path="/dashboard/*"
-                element={
-                  <ProtectedRoute>
-                    <UserDashboard />
-                  </ProtectedRoute>
-                }
-              />
+              <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
+              <Route path="/upload" element={<ProtectedRoute><Dropzone /></ProtectedRoute>} />
+              <Route path="/compare" element={<ProtectedRoute><CompareSlider /></ProtectedRoute>} />
+              <Route path="/scan-progress" element={<ProtectedRoute><ScanProgress /></ProtectedRoute>} />
 
               {/* Protected Admin Routes */}
               <Route

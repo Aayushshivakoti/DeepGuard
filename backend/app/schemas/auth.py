@@ -13,6 +13,7 @@ from pydantic import BaseModel, EmailStr, Field
 class RegisterRequest(BaseModel):
     email: EmailStr = Field(..., description="User email address")
     password: str = Field(..., min_length=8, description="Password (min 8 chars)")
+    full_name: Optional[str] = Field(default=None, description="Full name of the user")
     role: str = Field(default="user", description="User role: 'user' or 'admin'")
 
 
@@ -24,6 +25,7 @@ class LoginRequest(BaseModel):
 class UserProfile(BaseModel):
     id: str
     email: str
+    full_name: Optional[str] = None
     role: str
     is_active: bool
     created_at: datetime

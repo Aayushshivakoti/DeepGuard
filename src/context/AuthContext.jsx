@@ -51,11 +51,11 @@ export function AuthProvider({ children }) {
     }
   };
 
-  const signup = async (email, password, desiredRole = 'USER') => {
+  const signup = async (email, password, fullName = null, desiredRole = 'USER') => {
     setIsLoading(true);
     setAuthError(null);
     try {
-      const userProfile = await registerUser(email, password, desiredRole);
+      const userProfile = await registerUser(email, password, desiredRole, fullName);
       setIsLoading(false);
       return userProfile;
     } catch (err) {

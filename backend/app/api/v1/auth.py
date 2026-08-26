@@ -17,7 +17,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from jose import JWTError
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -101,12 +101,20 @@ async def register(body: RegisterRequest, db: AsyncSession = Depends(get_db)) ->
 
     user = User(
         email=body.email,
+        full_name=body.full_name,
         hashed_password=hash_password(body.password),
         role=body.role.upper() if body.role and body.role.upper() in ("USER", "ADMIN") else "USER",
         password_changed_at=datetime.now(timezone.utc),
     )
     db.add(user)
-    await db.commit()
+    try:
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Could not create user account.",
+        )
     await db.refresh(user)
 
     log.info("auth.register", email=body.email, role=user.role)
@@ -353,9 +361,13 @@ async def google_sso_login(body: dict, db: AsyncSession = Depends(get_db)):
                 is_active=True,
                 oauth_provider="google",
             )
-            db.add(user)
-            await db.commit()
-            await db.refresh(user)
+            try:
+                db.add(user)
+                await db.commit()
+                await db.refresh(user)
+            except Exception as e:
+                await db.rollback()
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Failed to register user: " + str(e))
             log.info("auth.google_sso.auto_registered", email=user.email)
 
         if not user.is_active:
