@@ -1,7 +1,8 @@
 @echo off
 set PYTHONIOENCODING=utf-8
-IF EXIST "backend\venv\Scripts\python.exe" (
-    "backend\venv\Scripts\python.exe" start.py
+set PYTHONUNBUFFERED=1
+IF EXIST "%~dp0backend\venv\Scripts\python.exe" (
+    "%~dp0backend\venv\Scripts\python.exe" "%~dp0start.py"
 ) ELSE (
-    py -3 start.py
+    py -3 "%~dp0start.py"
 )

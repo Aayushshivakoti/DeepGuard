@@ -34,24 +34,30 @@ def check_and_setup_env(base_python):
 
     # Recreate venv safely
     venv_dir = os.path.join(BACKEND_DIR, "venv")
-    if not os.path.exists(venv_dir):
-        print("Creating lightweight virtual environment...")
+    try:
+        if not os.path.exists(venv_dir):
+            print("Creating lightweight virtual environment...")
+            if "py " in base_python:
+                subprocess.run(f'{base_python} -m venv "{venv_dir}"', shell=True, check=True)
+            else:
+                subprocess.run([base_python, "-m", "venv", venv_dir], check=True)
+    except Exception as e:
+        print(f"⚠️ Environment creation failed: {e}. Attempting robust recreation...")
         if "py " in base_python:
-            subprocess.run(f"{base_python} -m venv \"{venv_dir}\"", shell=True, check=True)
+            subprocess.run(f'{base_python} -m venv "{venv_dir}" --clear', shell=True, check=True)
         else:
-            subprocess.run([base_python, "-m", "venv", venv_dir], check=True)
+            subprocess.run([base_python, "-m", "venv", venv_dir, "--clear"], check=True)
 
     venv_py = os.path.join(venv_dir, "Scripts", "python.exe") if sys.platform == "win32" else os.path.join(venv_dir, "bin", "python")
-    venv_pip = os.path.join(venv_dir, "Scripts", "pip.exe") if sys.platform == "win32" else os.path.join(venv_dir, "bin", "pip")
 
     # Install Wheel & Upgraded Pip first
-    subprocess.run([venv_pip, "install", "--quiet", "pip", "wheel", "setuptools"], check=False)
+    subprocess.run([venv_py, "-m", "pip", "install", "--quiet", "pip", "wheel", "setuptools"], check=False)
 
     # Safe Pip Install
     requirements_file = os.path.join(BACKEND_DIR, "requirements.txt")
     if os.path.exists(requirements_file):
         print("Syncing backend requirements (using binary wheels where available)...")
-        subprocess.run([venv_pip, "install", "--quiet", "-r", requirements_file], check=False)
+        subprocess.run([venv_py, "-m", "pip", "install", "--quiet", "-r", requirements_file], check=False)
 
     # Frontend install
     if not os.path.exists(os.path.join(ROOT_DIR, "node_modules")):
@@ -83,23 +89,21 @@ def launch_services(venv_py):
         # 1. Backend API (FastAPI)
         print("Starting FastAPI Backend (Port 8000)...")
         p_backend = subprocess.Popen(
-            [uvicorn_bin, "main:app", "--reload", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"],
+            [venv_py, "-m", "uvicorn", "main:app", "--reload", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"],
             cwd=BACKEND_DIR, env=env, shell=(sys.platform == "win32")
         )
         processes.append(p_backend)
 
         # 1.5 Celery Worker (Optional)
         print("Starting Celery Worker (Solo Pool)...")
-        celery_bin = os.path.join(bin_dir, "celery")
-        if os.path.exists(celery_bin) or os.path.exists(celery_bin + ".exe"):
-            try:
-                p_celery = subprocess.Popen(
-                    [celery_bin, "-A", "app.core.celery_app", "worker", "--loglevel=info", "-c", "1", "--pool=solo"],
-                    cwd=BACKEND_DIR, env=env, shell=(sys.platform == "win32")
-                )
-                processes.append(p_celery)
-            except Exception as e:
-                print(f"⚠️ Notice: Could not start Celery ({e})")
+        try:
+            p_celery = subprocess.Popen(
+                [venv_py, "-m", "celery", "-A", "app.core.celery_app", "worker", "--loglevel=info", "-c", "1", "--pool=solo"],
+                cwd=BACKEND_DIR, env=env, shell=(sys.platform == "win32")
+            )
+            processes.append(p_celery)
+        except Exception as e:
+            print(f"⚠️ Notice: Could not start Celery ({e})")
 
         # 2. Frontend React Client
         print("Starting Vite Frontend (Port 5173)...")
