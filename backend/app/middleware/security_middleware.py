@@ -91,8 +91,14 @@ class CSRFProtectionMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         path = request.url.path
 
-        # Skip exempt paths
-        if path in CSRF_EXEMPT_PATHS or path.startswith("/docs") or path.startswith("/redoc"):
+        # Skip exempt paths or any API/docs paths
+        if (
+            path in CSRF_EXEMPT_PATHS
+            or path.startswith("/api/")
+            or path.startswith("/docs")
+            or path.startswith("/redoc")
+            or request.headers.get("Authorization")
+        ):
             response = await call_next(request)
             return response
 

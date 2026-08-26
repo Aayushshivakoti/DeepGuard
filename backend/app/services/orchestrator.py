@@ -113,7 +113,23 @@ async def dispatch_file_scan(
         if metadata_result and metadata_result.flags:
             result.flags.extend(metadata_result.flags)
             
-        metadata_score = float(getattr(metadata_result, "confidence", 75.0 if (metadata_result and metadata_result.flags) else 10.0))
+        # Calculate metadata suspicion score based on severity of findings, not just presence
+        # Missing EXIF alone is common (social media, messaging apps, screenshots) and should not
+        # heavily penalize the overall score. Only synthetic software tags are a strong signal.
+        if metadata_result:
+            meta_flags = metadata_result.flags if metadata_result.flags else []
+            has_high_severity = any(
+                (f.severity if hasattr(f, 'severity') else f.get('severity', '')) == 'high'
+                for f in meta_flags
+            )
+            if has_high_severity:
+                metadata_score = 70.0  # Editing/AI software detected in EXIF
+            elif meta_flags:
+                metadata_score = 20.0  # Minor issues like missing EXIF (very common for normal photos)
+            else:
+                metadata_score = 5.0   # Clean metadata
+        else:
+            metadata_score = 5.0
         
         # Aggregate scores (ensemble: heuristic, real ML model probability, metadata)
         combined_vision_score = (result.confidence + model_prob) / 2.0

@@ -255,9 +255,8 @@ export async function loginUser(email, password) {
   return response.data;
 }
 
-export async function registerUser(email, password, role = 'USER', full_name = null) {
-  const payload = { email, password, role };
-  if (full_name) payload.full_name = full_name;
+export async function registerUser(email, password, role = 'USER', full_name = '') {
+  const payload = { email, password, role, full_name: full_name || '' };
   const response = await api.post('/auth/register', payload);
   return response.data;
 }

@@ -27,6 +27,11 @@ async def seed_users() -> None:
                 db.add(admin)
                 await db.flush()
                 log.info("db.seeded_admin", email="admin@example.com")
+            else:
+                admin.hashed_password = hash_password("AdminPass123!")
+                admin.role = "ADMIN"
+                await db.flush()
+                log.info("db.updated_admin", email="admin@example.com")
 
             # 2. Seed Standard User Account
             res_user = await db.execute(select(User).where(User.email == "user@example.com"))
@@ -41,6 +46,11 @@ async def seed_users() -> None:
                 db.add(user)
                 await db.flush()
                 log.info("db.seeded_user", email="user@example.com")
+            else:
+                user.hashed_password = hash_password("UserPass123!")
+                user.role = "USER"
+                await db.flush()
+                log.info("db.updated_user", email="user@example.com")
 
             await db.commit()
         except Exception as e:

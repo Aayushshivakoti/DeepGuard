@@ -15,6 +15,10 @@ import PasswordResetPage from './pages/PasswordResetPage';
 import EmailVerificationPage from './pages/EmailVerificationPage';
 import PublicReportPage from './pages/PublicReportPage';
 import NotFoundPage from './pages/NotFoundPage';
+// Additional component imports for protected routes
+import Dropzone from './components/workspace/Dropzone';
+import CompareSlider from './components/CompareSlider';
+import ScanProgress from './components/workspace/ScanProgress';
 
 function ProtectedRoute({ children }) {
   const { isAuthenticated, isLoading } = useAuth();
@@ -65,7 +69,7 @@ export default function App() {
               <Route path="/verify/:report_hash" element={<PublicReportPage />} />
 
               {/* Protected User Routes */}
-              <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
+              <Route path="/dashboard/*" element={<ProtectedRoute><UserDashboard /></ProtectedRoute>} />
               <Route path="/upload" element={<ProtectedRoute><Dropzone /></ProtectedRoute>} />
               <Route path="/compare" element={<ProtectedRoute><CompareSlider /></ProtectedRoute>} />
               <Route path="/scan-progress" element={<ProtectedRoute><ScanProgress /></ProtectedRoute>} />

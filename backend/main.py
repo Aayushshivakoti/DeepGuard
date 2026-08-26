@@ -15,7 +15,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import JSONResponse, ORJSONResponse
 
-from app.api.v1.router import api_v1_router
+# Ensure the top‑level "app" package can be resolved when running as "backend.main"
+import sys, os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))  # add project root to PYTHONPATH
+
+from backend.app.api.v1.router import api_v1_router
 from app.core.config import settings
 from app.core.logging_config import configure_logging
 from app.core.rate_limit import RateLimitMiddleware
@@ -46,8 +50,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:  # noqa: ARG001
         log.info("deepguard.db.tables_check_skipped")
         
     # Seed default Admin and Standard User credentials if they do not exist
-    from app.db.init_db import seed_users
-    await seed_users()
+    from app.db.init_db import init_db
+    await init_db()
 
     yield  # ← server is running
 
@@ -158,6 +162,34 @@ def create_application() -> FastAPI:
             status_code=500,
             content={"detail": "Internal server error. Please try again later."},
         )
+
+    # ── SPA / Static File Fallback ──────────────────────────────────────────────
+    from fastapi.staticfiles import StaticFiles
+    from fastapi.responses import FileResponse
+    
+    # Mount frontend dist/assets if it exists to allow serving static bundles directly from backend
+    dist_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "dist"))
+    if os.path.exists(dist_dir):
+        assets_dir = os.path.join(dist_dir, "assets")
+        if os.path.exists(assets_dir):
+            app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
+        
+        # Catch-all route to serve SPA index.html for frontend client-side routing fallback
+        @app.get("/{fallback_path:path}", tags=["System"], include_in_schema=False)
+        async def spa_fallback(fallback_path: str):
+            # Exempt backend API / docs routes
+            if (
+                fallback_path.startswith("api/") 
+                or fallback_path.startswith("docs") 
+                or fallback_path.startswith("redoc") 
+                or fallback_path.startswith("openapi.json")
+            ):
+                return JSONResponse(status_code=404, content={"detail": "Not Found"})
+                
+            index_path = os.path.join(dist_dir, "index.html")
+            if os.path.exists(index_path):
+                return FileResponse(index_path)
+            return JSONResponse(status_code=404, content={"detail": "SPA Build Entry Point Not Found"})
 
     return app
 

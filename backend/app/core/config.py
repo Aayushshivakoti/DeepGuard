@@ -23,14 +23,12 @@ class Settings(BaseSettings):
     DEBUG: bool = True
     RATE_LIMIT_ENABLED: bool = True
 
-    """
     # ── Security ───────────────────────────────────────────────────────────────
     SECRET_KEY: str = "insecure-dev-secret-change-in-production"
     JWT_SECRET: str = "CHANGE_ME_JWT_SECRET"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
     REFRESH_TOKEN_EXPIRE_DAYS: int = 30
     JWT_ALGORITHM: str = "HS256"
-"""
 
     # ── Password Policy ────────────────────────────────────────────────────────
     PASSWORD_MIN_LENGTH: int = 8
@@ -96,7 +94,7 @@ class Settings(BaseSettings):
     S3_REGION: str = "us-east-1"
 
     # ── CORS ──────────────────────────────────────────────────────────────────
-    CORS_ORIGINS: str = "http://localhost:5173,http://localhost:3000,http://localhost:4173"
+    CORS_ORIGINS: str = "http://localhost:5173,http://localhost:5174,http://127.0.0.1:5174,http://localhost:3000,http://localhost:4173"
 
     @property
     def cors_origins_list(self) -> List[str]:

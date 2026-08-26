@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { Shield, Plus, Trash2, Globe, Mail, Bell, Clock, RefreshCcw, CheckCircle2 } from 'lucide-react';
+import { Shield, Plus, Trash2, Globe, Mail, Bell, Clock, RefreshCcw, CheckCircle2, AlertTriangle } from 'lucide-react';
 import { getMonitors, createMonitor, deleteMonitor } from '../../api/scanApi';
 import { useToast } from '../../context/ToastContext';
 
 export default function ScheduledMonitorsTab() {
   const [monitors, setMonitors] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
   const [showAddForm, setShowAddForm] = useState(false);
   const [targetUrl, setTargetUrl] = useState('');
   const [frequency, setFrequency] = useState('DAILY');
@@ -19,11 +20,13 @@ export default function ScheduledMonitorsTab() {
 
   const fetchMonitors = async () => {
     setLoading(true);
+    setError(null);
     try {
       const data = await getMonitors();
       setMonitors(data || []);
     } catch (err) {
       console.warn("Failed to fetch monitors:", err);
+      setError(err.response?.data?.detail || err.message || 'Failed to load monitors. Please check your connection and try again.');
     } finally {
       setLoading(false);
     }
@@ -60,6 +63,33 @@ export default function ScheduledMonitorsTab() {
       addToast('Failed to remove monitor.', 'error');
     }
   };
+
+  if (loading) {
+    return (
+      <div className="flex flex-col items-center justify-center py-20 gap-3 animate-fade-in-up">
+        <div className="w-8 h-8 rounded-full border-2 border-cyan-500 border-t-transparent animate-spin" />
+        <p className="text-sm text-slate-400">Loading monitors…</p>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="flex flex-col items-center justify-center py-20 gap-4 animate-fade-in-up">
+        <div className="p-6 rounded-2xl border border-red-500/20 bg-red-500/5 max-w-md text-center">
+          <AlertTriangle size={32} className="text-red-400 mx-auto mb-3" />
+          <p className="text-base font-semibold text-red-400 mb-1">Failed to Load Monitors</p>
+          <p className="text-xs text-slate-400 mb-4">{error}</p>
+          <button
+            onClick={fetchMonitors}
+            className="btn-primary py-2 px-5 text-xs font-bold"
+          >
+            <RefreshCcw size={14} /> Retry
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6 animate-fade-in-up">

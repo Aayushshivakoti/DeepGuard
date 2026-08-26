@@ -1,0 +1,4 @@
+.compare-slider-container { position: relative; width: 100%; height: auto; }
+.compare-image { display: block; max-width: 100%; height: auto; }
+.curtain-line { height: 100%; }
+.compare-controls { font-size: 0.875rem; }

@@ -707,8 +707,8 @@ def _heuristic_score(fft_score: float, face_count: int) -> float:
     Deterministic heuristic deepfake probability when ML model is unavailable.
     Combines FFT anomaly score with presence/absence of faces.
     """
-    base = fft_score * 70.0
-    if face_count > 0:
-        base += 15.0
-    noise = np.random.uniform(-5.0, 5.0)
+    # Scale down the FFT anomaly contribution to avoid false positives in dev/mock environment
+    base = fft_score * 35.0
+    # Keep face presence neutral for deepfake likelihood
+    noise = np.random.uniform(-2.0, 2.0)
     return float(np.clip(base + noise, 5.0, 97.0))

@@ -19,10 +19,10 @@ async def seed_users():
         res_admin = await db.execute(select(User).where(User.email == 'admin@example.com'))
         admin = res_admin.scalar_one_or_none()
         if admin:
-            admin.hashed_password = hash_password('password')
+            admin.hashed_password = hash_password('AdminPass123!')
             admin.role = 'ADMIN'
         else:
-            admin = User(email='admin@example.com', hashed_password=hash_password('password'), role='ADMIN')
+            admin = User(email='admin@example.com', hashed_password=hash_password('AdminPass123!'), role='ADMIN')
             db.add(admin)
 
         await db.commit()

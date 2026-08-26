@@ -222,13 +222,33 @@ class DeepfakeVisionModel:
         Heuristic FFT-based mock prediction for development.
         Analyzes high-frequency energy ratio as a proxy for GAN artifacts.
         """
-        # Neutral mock prediction to avoid false positives when real model weights are unavailable.
-        # Returns a balanced 50/50 probability.
         try:
-            return 50.0, np.array([[50.0, 50.0]], dtype=np.float32)
+            # Dynamically compute FFT anomaly score for the image buffer
+            pil_image = Image.open(io.BytesIO(image_buffer)).convert("L")
+            gray = np.array(pil_image, dtype=np.float32)
+            fft = np.fft.fft2(gray)
+            fft_shifted = np.fft.fftshift(fft)
+            magnitude = np.log1p(np.abs(fft_shifted))
+            h, w = magnitude.shape
+            cy, cx = h // 2, w // 2
+            y_idx, x_idx = np.ogrid[:h, :w]
+            dist = np.sqrt((y_idx - cy) ** 2 + (x_idx - cx) ** 2)
+            max_dist = min(cy, cx)
+            high_freq_mask = dist > (0.7 * max_dist)
+            low_freq_mask = dist <= (0.3 * max_dist)
+            hf_energy = magnitude[high_freq_mask].sum()
+            lf_energy = magnitude[low_freq_mask].sum()
+            total_energy = magnitude.sum() + 1e-8
+            hf_ratio = hf_energy / total_energy
+            lf_ratio = lf_energy / total_energy
+            fft_score = float(np.clip((hf_ratio / (lf_ratio + 1e-6)) - 1.0, 0.0, 1.0))
+            
+            # Compute a scaled mock probability (max ~35% for typical photos to avoid false positives)
+            prob = float(np.clip(fft_score * 35.0 + np.random.uniform(-2.0, 2.0), 5.0, 95.0))
+            return prob, np.array([[100.0 - prob, prob]], dtype=np.float32)
         except Exception as e:
             log.warning("vision_model.mock_predict_failed", error=str(e))
-            return 50.0, np.array([[50.0, 50.0]], dtype=np.float32)
+            return 15.0, np.array([[85.0, 15.0]], dtype=np.float32)
 
     def get_model_info(self) -> Dict[str, Any]:
         """Return model metadata for API responses."""

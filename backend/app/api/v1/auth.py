@@ -19,6 +19,7 @@ from jose import JWTError
 from pydantic import BaseModel
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 
 from app.core.config import settings
 from app.core.security import (
@@ -95,7 +96,7 @@ async def register(body: RegisterRequest, db: AsyncSession = Depends(get_db)) ->
     existing = await db.execute(select(User).where(User.email == body.email))
     if existing.scalar_one_or_none():
         raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
+            status_code=status.HTTP_400_BAD_REQUEST,
             detail="An account with this email already exists.",
         )
 
@@ -109,6 +110,12 @@ async def register(body: RegisterRequest, db: AsyncSession = Depends(get_db)) ->
     db.add(user)
     try:
         await db.commit()
+    except IntegrityError as e:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="An account with this email already exists.",
+        )
     except Exception:
         await db.rollback()
         raise HTTPException(
@@ -157,14 +164,43 @@ async def register(body: RegisterRequest, db: AsyncSession = Depends(get_db)) ->
     summary="Authenticate and receive JWT access + refresh tokens",
     status_code=status.HTTP_200_OK,
 )
-async def login(body: LoginRequest, request: Request, db: AsyncSession = Depends(get_db)):
+async def login(request: Request, db: AsyncSession = Depends(get_db)):
+
+    email = None
+    password = None
+
+    # Parse body (JSON) or form (x-www-form-urlencoded)
+    try:
+        json_data = await request.json()
+        if json_data:
+            email = json_data.get("email") or json_data.get("username")
+            password = json_data.get("password")
+    except Exception:
+        pass
+
+    if not email or not password:
+        try:
+            form_data = await request.form()
+            email = form_data.get("username") or form_data.get("email")
+            password = form_data.get("password")
+        except Exception:
+            pass
+
+    if not email or not password:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Email and password are required.",
+        )
+
+    email_str = str(email).strip()
+    password_str = str(password)
 
     result = await db.execute(
-        select(User).where(User.email == body.email, User.deleted_at.is_(None))
+        select(User).where(User.email == email_str, User.deleted_at.is_(None))
     )
     user = result.scalar_one_or_none()
 
-    if not user or not verify_password(body.password, user.hashed_password):
+    if not user or not verify_password(password_str, user.hashed_password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid email or password.",
@@ -199,7 +235,7 @@ async def login(body: LoginRequest, request: Request, db: AsyncSession = Depends
     db.add(refresh_record)
     await db.commit()
 
-    log.info("auth.login.success", email=body.email)
+    log.info("auth.login.success", email=email_str)
 
     return {
         "access_token": access_token,
@@ -207,6 +243,14 @@ async def login(body: LoginRequest, request: Request, db: AsyncSession = Depends
         "token_type": "bearer",
         "expires_in": settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
         "role": user.role,
+        "user": {
+            "id": str(user.id),
+            "email": user.email,
+            "role": user.role,
+            "full_name": user.full_name,
+            "is_active": user.is_active,
+            "created_at": user.created_at.isoformat() if hasattr(user.created_at, "isoformat") else str(user.created_at),
+        }
     }
 
 

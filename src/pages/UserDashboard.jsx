@@ -14,6 +14,7 @@ import ResultCard from '../components/workspace/ResultCard';
 import ScanProgress from '../components/workspace/ScanProgress';
 import AlertHub from '../components/common/AlertHub';
 import ShortcutsModal from '../components/workspace/ShortcutsModal';
+import VideoTimelineScrubber from '../components/VideoTimelineScrubber'; // Adjust path if needed
 import ProfilePage from './ProfilePage';
 import AboutPage from './AboutPage';
 import ScheduledMonitorsTab from '../components/workspace/ScheduledMonitorsTab';
@@ -79,6 +80,7 @@ export default function UserDashboard() {
   const [selectedFile, setSelectedFile] = useState(null);
   const [personalHistory, setPersonalHistory] = useState([]);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+  const [historyError, setHistoryError] = useState(null);
   const [url, setUrl] = useState('');
   const [urlError, setUrlError] = useState('');
 
@@ -92,11 +94,13 @@ export default function UserDashboard() {
 
   const fetchPersonalHistory = async () => {
     setIsLoadingHistory(true);
+    setHistoryError(null);
     try {
       const scans = await getUserScans();
       setPersonalHistory(scans);
     } catch (err) {
       console.warn('Failed to load user scan history:', err.message);
+      setHistoryError(err.response?.data?.detail || err.message || 'Failed to load scan history. Please check your connection and try again.');
     } finally {
       setIsLoadingHistory(false);
     }
@@ -287,6 +291,11 @@ export default function UserDashboard() {
 
             {/* Scan progress */}
             <ScanProgress />
+            {/* Video Timeline Scrubber */}
+            <VideoTimelineScrubber 
+              videoUrl={state.scanResult?.videoUrl} 
+              timestamps={state.scanResult?.fakeSegments} 
+            />
           </div>
 
           {/* Right side: Results Card */}
@@ -297,6 +306,34 @@ export default function UserDashboard() {
 
         {/* Personal Scan History Workspace Table */}
         <div className="p-6 rounded-2xl border border-slate-900" style={{ background: 'rgba(15,23,42,0.3)', backdropFilter: 'blur(12px)' }}>
+          {/* Loading State */}
+          {isLoadingHistory && personalHistory.length === 0 && !historyError && (
+            <div className="flex flex-col items-center justify-center py-16 gap-3">
+              <div className="w-8 h-8 rounded-full border-2 border-cyan-500 border-t-transparent animate-spin" />
+              <p className="text-sm text-slate-400">Loading scan history…</p>
+            </div>
+          )}
+
+          {/* Error State */}
+          {historyError && (
+            <div className="flex flex-col items-center justify-center py-12 gap-4">
+              <div className="p-4 rounded-2xl border border-red-500/20 bg-red-500/5 max-w-md text-center">
+                <AlertTriangle size={28} className="text-red-400 mx-auto mb-2" />
+                <p className="text-sm font-semibold text-red-400 mb-1">Failed to Load Scan History</p>
+                <p className="text-xs text-slate-400 mb-3">{historyError}</p>
+                <button
+                  onClick={fetchPersonalHistory}
+                  className="btn-primary py-1.5 px-4 text-xs"
+                >
+                  <RefreshCw size={12} /> Retry
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Normal Content */}
+          {!historyError && !(isLoadingHistory && personalHistory.length === 0) && (
+          <>
           <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4 mb-6">
             <div>
               <h3 className="text-lg font-black text-white">Your Forensic Scans Workspace</h3>
@@ -562,6 +599,8 @@ export default function UserDashboard() {
                 </button>
               </div>
             </div>
+          )}
+          </>
           )}
         </div>
       </div>

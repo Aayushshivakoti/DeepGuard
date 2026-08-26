@@ -67,7 +67,8 @@ export default function LoginPage() {
         }, 1200);
       }
     } catch (err) {
-      setError(err.message || 'Authentication request failed.');
+      const errMsg = err.response?.data?.detail || err.message || 'Authentication request failed.';
+      setError(errMsg);
     } finally {
       setIsLoading(false);
     }
@@ -91,7 +92,8 @@ export default function LoginPage() {
       }
       const data = await googleSsoLogin({ token: 'google_id_token_verified', email: 'google_user@example.com' });
       if (data && data.access_token) {
-        localStorage.setItem('deepguard_token', data.access_token);
+        localStorage.setItem('token', data.access_token);
+        localStorage.setItem('role', data.role || 'USER');
         localStorage.setItem('deepguard_user', JSON.stringify(data.user || { email: 'google_user@example.com', role: 'USER' }));
         setSuccessMsg('Google SSO authorization verified! Redirecting...');
         window.location.href = '/dashboard';
@@ -99,7 +101,8 @@ export default function LoginPage() {
         throw new Error('Invalid token response from authentication server.');
       }
     } catch (err) {
-      setError(err.message || 'Google SSO authentication failed or popup closed.');
+      const errMsg = err.response?.data?.detail || err.message || 'Google SSO authentication failed or popup closed.';
+      setError(errMsg);
     } finally {
       setSsoLoading(false);
     }
