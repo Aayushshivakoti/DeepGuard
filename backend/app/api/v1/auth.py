@@ -28,7 +28,7 @@ from app.core.security import (
 from app.db.models.user import User
 from app.db.models.refresh_token import RefreshToken
 from app.db.session import get_db
-from app.schemas.auth import LoginRequest, RegisterRequest, TokenResponse, UserProfile
+from app.schemas.auth import LoginRequest, RegisterRequest, RegisterResponse, UserProfile
 from app.middleware.security_middleware import validate_password_complexity
 
 log = structlog.get_logger(__name__)
@@ -76,7 +76,7 @@ async def require_current_user(
 
 @router.post(
     "/register",
-    response_model=UserProfile,
+    response_model=RegisterResponse,
     summary="Register a new user account",
     status_code=status.HTTP_201_CREATED,
 )
@@ -111,12 +111,34 @@ async def register(body: RegisterRequest, db: AsyncSession = Depends(get_db)) ->
 
     log.info("auth.register", email=body.email, role=user.role)
 
-    return UserProfile(
-        id=str(user.id),
-        email=user.email,
+    # Issue JWT tokens for the newly registered user
+    access_token = create_access_token(subject=str(user.id))
+    raw_refresh, refresh_hash, refresh_expires = create_refresh_token()
+    refresh_record = RefreshToken(
+        user_id=user.id,
+        token_hash=refresh_hash,
+        expires_at=refresh_expires,
+        device_info="registration",
+        ip_address=None,
+    )
+    db.add(refresh_record)
+    await db.commit()
+    await db.refresh(user)
+    log.info("auth.register.success", email=body.email, role=user.role)
+
+    return RegisterResponse(
+        access_token=access_token,
+        refresh_token=raw_refresh,
+        token_type="bearer",
+        expires_in=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
         role=user.role,
-        is_active=user.is_active,
-        created_at=user.created_at,
+        user=UserProfile(
+            id=str(user.id),
+            email=user.email,
+            role=user.role,
+            is_active=user.is_active,
+            created_at=user.created_at,
+        ),
     )
 
 

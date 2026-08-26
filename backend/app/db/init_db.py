@@ -25,6 +25,7 @@ async def seed_users() -> None:
                     is_active=True
                 )
                 db.add(admin)
+                await db.flush()
                 log.info("db.seeded_admin", email="admin@example.com")
 
             # 2. Seed Standard User Account
@@ -38,6 +39,7 @@ async def seed_users() -> None:
                     is_active=True
                 )
                 db.add(user)
+                await db.flush()
                 log.info("db.seeded_user", email="user@example.com")
 
             await db.commit()

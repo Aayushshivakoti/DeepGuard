@@ -8,7 +8,7 @@ Provides real-time streaming updates for:
 from __future__ import annotations
 
 from fastapi import HTTPException, Query, status
-import jwt
+from jose import jwt, JWTError
 from app.core.config import settings
 from typing import Dict, List
 import asyncio
@@ -22,7 +22,7 @@ def verify_jwt_token(token: str):
                 token = token[7:]
             payload = jwt.decode(token, settings.JWT_SECRET, algorithms=[settings.JWT_ALGORITHM])
             return payload
-        except jwt.PyJWTError as e:
+        except JWTError as e:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid JWT token")
 
 

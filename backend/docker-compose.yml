@@ -39,7 +39,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-      target: runtime
+      target: runner
     restart: unless-stopped
     ports:
       - "8000:8000"
@@ -70,7 +70,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-      target: runtime
+      target: runner
     restart: unless-stopped
     command: >
       celery -A app.core.celery_app worker
@@ -97,7 +97,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-      target: runtime
+      target: runner
     restart: unless-stopped
     command: celery -A app.core.celery_app flower --port=5555
     ports:

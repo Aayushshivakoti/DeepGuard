@@ -21,13 +21,6 @@ class LoginRequest(BaseModel):
     password: str
 
 
-class TokenResponse(BaseModel):
-    access_token: str
-    token_type: str = "bearer"
-    expires_in: int = Field(..., description="Token expiry in seconds")
-    role: str = "USER"
-
-
 class UserProfile(BaseModel):
     id: str
     email: str
@@ -37,3 +30,33 @@ class UserProfile(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+# Response models
+class RegisterResponse(BaseModel):
+    access_token: str
+    refresh_token: str
+    token_type: str = "bearer"
+    expires_in: int = Field(..., description="Token expiry in seconds")
+    role: str
+    user: UserProfile
+
+class RefreshResponse(BaseModel):
+    access_token: str
+    refresh_token: str
+    token_type: str = "bearer"
+    expires_in: int = Field(..., description="Token expiry in seconds")
+
+class TokenPayload(BaseModel):
+    sub: UUID
+    exp: int
+    role: str
+
+class PasswordResetResponse(BaseModel):
+    status: str
+    message: str
+    debug_token: Optional[str] = None
+
+class EmailVerificationResponse(BaseModel):
+    status: str
+    message: str

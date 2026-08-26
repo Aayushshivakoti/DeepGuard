@@ -76,9 +76,8 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers["X-XSS-Protection"] = "1; mode=block"
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
         response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
-
-        if not settings.DEBUG:
-            response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+        response.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:;"
 
         return response
 
@@ -90,11 +89,6 @@ class CSRFProtectionMiddleware(BaseHTTPMiddleware):
     """
 
     async def dispatch(self, request: Request, call_next):
-        # Only enforce in production
-        if settings.DEBUG:
-            response = await call_next(request)
-            return response
-
         path = request.url.path
 
         # Skip exempt paths
@@ -133,7 +127,7 @@ class CSRFProtectionMiddleware(BaseHTTPMiddleware):
                 csrf_token,
                 httponly=False,  # Must be readable by JS
                 samesite="strict",
-                secure=not settings.DEBUG,
+                secure=True,
                 max_age=3600,
             )
 
