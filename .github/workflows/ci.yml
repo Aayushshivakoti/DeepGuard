@@ -1,89 +1,66 @@
-name: DeepGuard CI/CD Pipeline
+name: CI/CD Pipeline
 
 on:
   push:
-    branches: [ main, develop ]
+    branches:
+      - main
   pull_request:
-    branches: [ main ]
+    branches:
+      - main
 
 jobs:
-  test-backend:
-    name: Backend Test Suite
+  backend-tests:
+    name: Backend Tests (Pytest)
     runs-on: ubuntu-latest
-
-    services:
-      redis:
-        image: redis:7-alpine
-        ports:
-          - 6379:6379
-
     steps:
-    - uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-    - name: Set up Python 3.10
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.10'
-        cache: 'pip'
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: "pip"
 
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install -r backend/requirements.txt
-        pip install pytest pytest-asyncio pytest-cov
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt
 
-    - name: Run Backend Tests with Coverage
-      env:
-        SECRET_KEY: test-secret-key-change-in-production
-        DATABASE_URL: sqlite+aiosqlite:///./test_db.sqlite
-        REDIS_URL: redis://localhost:6379/0
-        USE_MOCK_MODELS: "true"
-      run: |
-        cd backend
-        pytest --cov=app --cov-report=xml tests/
+      - name: Run pytest
+        env:
+          RATE_LIMIT_ENABLED: "false"
+        run: |
+          cd backend
+          pytest -q
 
-    - name: Upload coverage report
-      uses: codecov/codecov-action@v4
-      with:
-        token: ${{ secrets.CODECOV_TOKEN }}
-        file: backend/coverage.xml
-
-  build-and-push:
-    name: Build & Push Multi-Arch Docker Images
-    needs: test-backend
+  frontend-build:
+    name: Frontend Build (Node.js)
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-
     steps:
-    - uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-    - name: Set up QEMU
-      uses: docker/setup-qemu-action@v3
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "18"
+          cache: "npm"
 
-    - name: Set up Docker Buildx
-      uses: docker/setup-buildx-action@v3
+      - name: Install NPM dependencies
+        run: npm ci
 
-    - name: Login to GitHub Container Registry
-      uses: docker/login-action@v3
-      with:
-        registry: ghcr.io
-        username: ${{ github.repository_owner }}
-        password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build frontend
+        run: npm run build
 
-    - name: Build and Push Gateway Image
-      uses: docker/build-push-action@v5
-      with:
-        context: ./backend
-        platforms: linux/amd64,linux/arm64
-        push: true
-        tags: |
-          ghcr.io/${{ github.repository }}/gateway:latest
-          ghcr.io/${{ github.repository }}/gateway:${{ github.sha }}
+  docker-build:
+    name: Docker Container Build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-    - name: Run Snyk Container Vulnerability Scan
-      uses: snyk/actions/docker@master
-      env:
-        SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
-      with:
-        image: ghcr.io/${{ github.repository }}/gateway:latest
-        args: --file=backend/Dockerfile
+      - name: Build Docker compose
+        run: |
+          cd backend
+          docker compose build

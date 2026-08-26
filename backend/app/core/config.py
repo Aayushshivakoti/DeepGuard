@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     APP_NAME: str = "Deepfake & Phishing Media Verification Gateway"
     APP_ENV: str = "development"
     DEBUG: bool = True
+    RATE_LIMIT_ENABLED: bool = True
 
     """
     # ── Security ───────────────────────────────────────────────────────────────

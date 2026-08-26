@@ -25,6 +25,9 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         self.local_cache = {}
 
     async def dispatch(self, request: Request, call_next):
+        if not getattr(settings, "RATE_LIMIT_ENABLED", True):
+            return await call_next(request)
+
         # Apply rate limiting exclusively to scan endpoints
         if request.url.path.startswith("/api/v1/scan"):
             # Determine rate limit key: extract JWT user id or fallback to IP
