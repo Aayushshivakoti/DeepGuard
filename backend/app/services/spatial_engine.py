@@ -228,7 +228,8 @@ def load_spatial_model():
             backbone.load_state_dict(state, strict=False)
             log.info("spatial_engine.weights_loaded", path=weights_path)
         else:
-            log.warning("spatial_engine.weights_missing", path=weights_path, fallback="random init")
+            log.warning("spatial_engine.weights_missing", path=weights_path, fallback="mock mode")
+            return None
 
         backbone.to(_device)
         backbone.eval()
@@ -709,7 +710,7 @@ def _heuristic_score(fft_score: float, face_count: int) -> float:
     Combines FFT anomaly score with presence/absence of faces.
     """
     # Scale down the FFT anomaly contribution to avoid false positives in dev/mock environment
-    base = fft_score * 35.0
+    base = fft_score * 20.0
     # Keep face presence neutral for deepfake likelihood
     noise = np.random.uniform(-2.0, 2.0)
     return float(np.clip(base + noise, 5.0, 97.0))

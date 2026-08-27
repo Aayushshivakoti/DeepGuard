@@ -297,8 +297,8 @@ class DeepfakeVisionModel:
             lf_ratio = lf_energy / total_energy
             fft_score = float(np.clip((hf_ratio / (lf_ratio + 1e-6)) - 1.0, 0.0, 1.0))
             
-            # Compute a scaled mock probability (max ~35% for typical photos to avoid false positives)
-            prob = float(np.clip(fft_score * 35.0 + np.random.uniform(-2.0, 2.0), 5.0, 95.0))
+            # Compute a scaled mock probability (max ~20% for typical photos to avoid false positives)
+            prob = float(np.clip(fft_score * 20.0 + np.random.uniform(-2.0, 2.0), 5.0, 95.0))
             return prob, np.array([[100.0 - prob, prob]], dtype=np.float32)
         except Exception as e:
             log.warning("vision_model.mock_predict_failed", error=str(e))
