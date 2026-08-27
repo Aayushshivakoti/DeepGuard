@@ -247,5 +247,40 @@ export function useScan() {
     }
   }, [dispatch, addToast]);
 
-  return { runScan, runUrlScan };
+  const runBatchScan = useCallback(async (files, mediaType, onProgress) => {
+    dispatch({ type: ACTIONS.SET_SCAN_STATUS, payload: 'scanning' });
+    dispatch({ type: ACTIONS.SET_SCAN_PROGRESS, payload: 10 });
+    dispatch({ type: ACTIONS.SET_SCAN_STEP, payload: `Uploading ${files.length} batch items...` });
+
+    try {
+      const { scanBatchFiles } = await import('../api/scanApi');
+      const { data, isMock } = await scanBatchFiles(files, mediaType);
+      
+      dispatch({ type: ACTIONS.SET_SCAN_PROGRESS, payload: 100 });
+      dispatch({ type: ACTIONS.SET_SCAN_STEP, payload: 'Batch analysis complete.' });
+      dispatch({ type: ACTIONS.SET_MOCK_DATA, payload: isMock });
+      
+      await new Promise(r => setTimeout(r, 400));
+      
+      // Dispatch the last scan result as the active result
+      if (data && data.length > 0) {
+        const lastResult = data[data.length - 1];
+        dispatch({ type: ACTIONS.SET_SCAN_RESULT, payload: lastResult });
+        
+        // Add all to history
+        data.forEach(item => {
+          dispatch({ type: ACTIONS.ADD_TO_HISTORY, payload: item });
+        });
+      }
+      
+      addToast(`Batch scan completed for ${files.length} file(s)`, 'success');
+    } catch (err) {
+      console.error("Batch scan failed:", err);
+      dispatch({ type: ACTIONS.SET_SCAN_STATUS, payload: 'error' });
+      dispatch({ type: ACTIONS.SET_SCAN_STEP, payload: err.message || 'Batch scan process encountered an error.' });
+      addToast(err.message || 'Batch scan process encountered an error.', 'error');
+    }
+  }, [dispatch, addToast]);
+
+  return { runScan, runUrlScan, runBatchScan };
 }

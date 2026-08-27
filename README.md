@@ -50,19 +50,19 @@ These augmentations force the model to focus on genuine generative artifacts rat
 ## 4. High-Level System Architecture
 ```mermaid
 graph TD
-    UI[User Client<br/>Vite React Dashboard] -->|REST API & WebSockets| API[API Gateway / Router<br/>FastAPI Backend]
-    API -->|Enqueues Job| Broker[Message Broker<br/>Redis]
-    Broker -->|Dispatches Task| Worker[Async Task Queue<br/>Celery Worker Node]
+    UI[User Client<br/>Vite React Dashboard] -->|"REST API & WebSockets"| API[API Gateway / Router<br/>FastAPI Backend]
+    API -->|"Enqueues Job"| Broker[Message Broker<br/>Redis]
+    Broker -->|"Dispatches Task"| Worker[Async Task Queue<br/>Celery Worker Node]
     
     subgraph ML_Pipeline [ML Pipeline Engine]
-        Worker -->|Image Tensor| Spatial[Stream A:<br/>Spatial RGB Backbone<br/>EfficientNet / ConvNeXt]
-        Worker -->|Image Tensor| Freq[Stream B:<br/>Frequency Spectrum Analyzer<br/>2D FFT + ELA]
+        Worker -->|"Image Tensor"| Spatial[Stream A:<br/>Spatial RGB Backbone<br/>EfficientNet / ConvNeXt]
+        Worker -->|"Image Tensor"| Freq[Stream B:<br/>Frequency Spectrum Analyzer<br/>2D FFT + ELA]
         Spatial --> Fusion[Decision Fusion Head]
         Freq --> Fusion
     end
     
-    Fusion -->|Saves Results| DB[(Primary Database<br/>PostgreSQL / SQLite via SQLAlchemy)]
-    API <-->|Reads/Writes| DB
+    Fusion -->|"Saves Results"| DB[(Primary Database<br/>PostgreSQL / SQLite via SQLAlchemy)]
+    API <-->|"Reads/Writes"| DB
 ```
 
 ## 5. End-to-End Media Scan Workflow

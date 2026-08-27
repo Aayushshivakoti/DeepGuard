@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useApp, ACTIONS } from '../context/AppContext';
-import { getAdminMetrics, getAlertFeed, getAdminUsersList, toggleUserActiveStatus, MOCK_ADMIN_METRICS, MOCK_ALERT_FEED } from '../api/scanApi';
+import { getAdminMetrics, getAlertFeed, getAdminUsersList, toggleUserActiveStatus, assignUserRole, MOCK_ADMIN_METRICS, MOCK_ALERT_FEED } from '../api/scanApi';
 
 // Components
 import Sidebar from '../components/common/Sidebar';
@@ -20,13 +20,14 @@ import Telemetry from '../components/admin/Telemetry';
 import SiemExporterSettings from '../components/admin/SiemExporterSettings';
 import UserQuotas from '../components/admin/UserQuotas';
 import CaseDossier from '../components/admin/CaseDossier';
+import WebhookSettings from '../components/admin/WebhookSettings';
 import { useTheme } from '../hooks/useTheme';
 
 // Icons
 import {
   LogOut, User, Users, Server, RefreshCw, Loader2, Sun, Moon, Menu, Database,
   BarChart3, ShieldAlert, FileText, SlidersHorizontal, Settings as SettingsIcon,
-  Activity, Globe, Lock, Zap, Layers, Terminal
+  Activity, Globe, Lock, Zap, Layers, Terminal, Send
 } from 'lucide-react';
 
 export default function AdminDashboard() {
@@ -389,13 +390,24 @@ export default function AdminDashboard() {
                                   {usr.email}
                                 </td>
                                 <td className="px-6 py-3">
-                                  <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
-                                    usr.role.toUpperCase() === 'ADMIN'
-                                      ? 'bg-purple-500/10 text-purple-400 border border-purple-500/20'
-                                      : 'bg-slate-950 text-slate-400'
-                                  }`}>
-                                    {usr.role}
-                                  </span>
+                                  <select
+                                    value={usr.role}
+                                    onChange={async (e) => {
+                                      const newRole = e.target.value;
+                                      try {
+                                        await assignUserRole(usr.id, newRole);
+                                        fetchUsers();
+                                      } catch (err) {
+                                        console.error("Failed to assign role:", err);
+                                      }
+                                    }}
+                                    className="bg-slate-950 border border-slate-800 text-[10px] rounded px-1.5 py-0.5 text-slate-300 font-bold uppercase cursor-pointer"
+                                  >
+                                    <option value="USER">User (Analyst)</option>
+                                    <option value="ADMIN">Super Admin</option>
+                                    <option value="SECURITY_ANALYST">Security Analyst</option>
+                                    <option value="AUDITOR">Auditor</option>
+                                  </select>
                                 </td>
                                 <td className="px-6 py-3 text-xs text-slate-400">
                                   {new Date(usr.created_at).toLocaleString()}
@@ -454,6 +466,15 @@ export default function AdminDashboard() {
                     <span>General Setup</span>
                   </button>
                   <button
+                    onClick={() => setSettingsSubView('webhooks')}
+                    className={`flex items-center gap-1.5 px-3 py-1 text-xs font-bold rounded-lg transition-all ${
+                      settingsSubView === 'webhooks' ? 'bg-cyan-500/10 text-cyan-400 border border-cyan-500/30' : 'text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    <Send size={13} />
+                    <span>Webhooks</span>
+                  </button>
+                  <button
                     onClick={() => setSettingsSubView('rbac')}
                     className={`flex items-center gap-1.5 px-3 py-1 text-xs font-bold rounded-lg transition-all ${
                       settingsSubView === 'rbac' ? 'bg-cyan-500/10 text-cyan-400 border border-cyan-500/30' : 'text-slate-400 hover:text-slate-200'
@@ -482,6 +503,7 @@ export default function AdminDashboard() {
               </div>
 
               {settingsSubView === 'setup' && <SystemSettings />}
+              {settingsSubView === 'webhooks' && <WebhookSettings />}
               {settingsSubView === 'rbac' && <RbacManager />}
               {settingsSubView === 'soar' && <SoarPlaybooks />}
             </div>

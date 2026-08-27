@@ -27,6 +27,7 @@ import structlog
 from PIL import Image
 
 from app.core.config import settings
+from app.services.onnx_wrapper import ONNXModelWrapper
 from app.schemas.scan import ForensicFlag
 import scipy.fftpack
 
@@ -633,30 +634,62 @@ async def analyze_image(buffer: bytes) -> ImageAnalysisResult:
         mediapipe_facemesh.append(mesh_coords)
 
     # ── Step 3: Model Inference ───────────────────────────────────────────────
-    model = load_spatial_model()
-
-    if model is not None and TORCH_AVAILABLE:
+    # Attempt to use ONNX Runtime if an exported model is present
+    onnx_wrapper = None
+    onnx_path = os.path.join(os.path.dirname(settings.SPATIAL_MODEL_PATH), "deepguard_spatial.onnx")
+    if os.path.exists(onnx_path):
         try:
-            with torch.no_grad():
-                inp = _transform(pil_img).unsqueeze(0).to(_device)
-                if magnitude is not None:
-                    mag_resized = cv2.resize(magnitude, (380, 380), interpolation=cv2.INTER_AREA)
-                    mag_min, mag_max = mag_resized.min(), mag_resized.max()
-                    mag_norm = (mag_resized - mag_min) / (mag_max - mag_min + 1e-8)
-                else:
-                    mag_norm = np.zeros((380, 380), dtype=np.float32)
-                fft_tensor = torch.from_numpy(mag_norm).unsqueeze(0).unsqueeze(0).float().to(_device)
-                inp_combined = torch.cat([inp, fft_tensor], dim=1)
+            onnx_wrapper = ONNXModelWrapper(onnx_path)
+        except Exception as e:
+            log.warning("onnx.wrapper_init_failed", error=str(e))
 
-                logits = model(inp_combined)
-                probs = torch.softmax(logits, dim=1)
-                deepfake_prob = float(probs[0, 1].item()) * 100.0
+    # Prepare magnitude normalization (shared for both paths)
+    if magnitude is not None:
+        mag_resized = cv2.resize(magnitude, (380, 380), interpolation=cv2.INTER_AREA)
+        mag_min, mag_max = mag_resized.min(), mag_resized.max()
+        mag_norm = (mag_resized - mag_min) / (mag_max - mag_min + 1e-8)
+    else:
+        mag_norm = np.zeros((380, 380), dtype=np.float32)
+
+    if onnx_wrapper and onnx_wrapper.session is not None:
+        # ONNX inference path: input as NumPy array (B, C, H, W)
+        try:
+            # Transform image to tensor, then to NumPy
+            inp_np = _transform(pil_img).unsqueeze(0).numpy()  # shape (1,3,380,380)
+            # Add FFT channel
+            fft_tensor = np.expand_dims(mag_norm, axis=0)  # (1,380,380)
+            inp_combined = np.concatenate([inp_np, fft_tensor[:, np.newaxis, :, :]], axis=1)  # (1,4,380,380)
+            logits = onnx_wrapper.run_inference(inp_combined.astype(np.float32))
+            probs = torch.softmax(torch.from_numpy(logits), dim=1)
+            deepfake_prob = float(probs[0, 1].item()) * 100.0
         except Exception as exc:
-            log.warning("spatial_engine.inference_failed", error=str(exc))
+            log.warning("onnx.inference_failed", error=str(exc))
             deepfake_prob = _heuristic_score(fft_score, face_count)
-
-        heatmap_b64 = _generate_gradcam_heatmap(model, pil_img, _transform, _device, faces, magnitude=magnitude)
-
+        # Use PyTorch model for Grad-CAM if available, else mock
+        model = load_spatial_model()
+        if model is not None and TORCH_AVAILABLE:
+            heatmap_b64 = _generate_gradcam_heatmap(model, pil_img, _transform, _device, faces, magnitude=magnitude)
+        else:
+            heatmap_b64 = _mock_gradcam_heatmap(pil_img, deepfake_prob) if face_count > 0 or deepfake_prob > 40 else None
+    elif TORCH_AVAILABLE:
+        model = load_spatial_model()
+        if model is not None:
+            try:
+                with torch.no_grad():
+                    inp = _transform(pil_img).unsqueeze(0).to(_device)
+                    fft_tensor = torch.from_numpy(mag_norm).unsqueeze(0).unsqueeze(0).float().to(_device)
+                    inp_combined = torch.cat([inp, fft_tensor], dim=1)
+                    logits = model(inp_combined)
+                    probs = torch.softmax(logits, dim=1)
+                    deepfake_prob = float(probs[0, 1].item()) * 100.0
+                heatmap_b64 = _generate_gradcam_heatmap(model, pil_img, _transform, _device, faces, magnitude=magnitude)
+            except Exception as exc:
+                log.warning("spatial_engine.inference_failed", error=str(exc))
+                deepfake_prob = _heuristic_score(fft_score, face_count)
+                heatmap_b64 = _mock_gradcam_heatmap(pil_img, deepfake_prob) if face_count > 0 or deepfake_prob > 40 else None
+        else:
+            deepfake_prob = _heuristic_score(fft_score, face_count)
+            heatmap_b64 = _mock_gradcam_heatmap(pil_img, deepfake_prob) if face_count > 0 or deepfake_prob > 40 else None
     else:
         deepfake_prob = _heuristic_score(fft_score, face_count)
         heatmap_b64 = _mock_gradcam_heatmap(pil_img, deepfake_prob) if face_count > 0 or deepfake_prob > 40 else None

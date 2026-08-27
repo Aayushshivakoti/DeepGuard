@@ -204,6 +204,26 @@ export async function scanFile(file, mediaType) {
   }
 }
 
+export async function scanBatchFiles(files, mediaType) {
+  try {
+    const formData = new FormData();
+    files.forEach((file) => {
+      formData.append('files', file);
+    });
+    formData.append('media_type', mediaType);
+
+    const response = await api.post('/scan/batch', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+    return { data: response.data, isMock: false };
+  } catch (error) {
+    console.warn('[scanApi] API offline, using mock batch results:', error.message);
+    await new Promise(r => setTimeout(r, 2000));
+    const results = files.map(file => getMockResult(file, mediaType));
+    return { data: results, isMock: true };
+  }
+}
+
 export async function scanUrl(url) {
   try {
     const response = await api.post('/scan/url', { url });
@@ -409,6 +429,51 @@ export async function requestEmailVerification() {
 
 export async function verifyEmail(token) {
   const response = await api.post('/auth/email-verification/verify', { token });
+  return response.data;
+}
+
+export async function getModelTelemetry() {
+  try {
+    const response = await api.get('/admin/telemetry');
+    return response.data;
+  } catch (error) {
+    console.warn('[scanApi] Failed to fetch model telemetry, using mock fallback.');
+    return {
+      gpu_allocated_mb: 1024.0,
+      gpu_max_allocated_mb: 4096.0,
+      cpu_usage_percent: 14.2,
+      ram_allocated_mb: 512.6,
+      active_model_state: "Fallback (Mock Heuristics)",
+      average_latency_ms: 242.0,
+      scan_throughput_tps: 1.8,
+      today_scan_count: 142,
+    };
+  }
+}
+
+export async function getWebhooks() {
+  try {
+    const response = await api.get('/admin/webhooks');
+    return response.data;
+  } catch {
+    return [
+      { id: 'wh-mock', name: 'Slack Threat Channel', url: 'https://hooks.slack.com/services/mock', threshold: 80.0, is_active: true }
+    ];
+  }
+}
+
+export async function configureWebhook(data) {
+  const response = await api.post('/admin/webhooks', data);
+  return response.data;
+}
+
+export async function testWebhook(url) {
+  const response = await api.post('/admin/webhooks/test', { url });
+  return response.data;
+}
+
+export async function assignUserRole(userId, role) {
+  const response = await api.patch(`/admin/users/${userId}/role`, { role });
   return response.data;
 }
 

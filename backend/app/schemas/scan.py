@@ -66,6 +66,8 @@ class VerificationResponse(BaseModel):
     phash_similarity: Optional[float] = Field(default=None, description="Similarity score of the cache hit")
     sandbox_status: Optional[str] = Field(default=None, description="Malicious download payload sandbox status")
     detected_payload_type: Optional[str] = Field(default=None, description="File type of payload detected")
+    fft_spectral_noise: Optional[List[float]] = Field(None, description="FFT high-frequency noise score array")
+    exif_metadata_notes: Optional[str] = Field(None, description="Detailed EXIF metadata penalty notes")
 
     # ── Performance ───────────────────────────────────────────────────────────
     processing_time_ms: int = Field(..., description="Total processing time in milliseconds")

@@ -33,7 +33,7 @@ export default function UserDashboard() {
   const { user, logout } = useAuth();
   const { state, resetScan, dispatch } = useApp();
   const { theme, toggleTheme } = useTheme();
-  const { runScan, runUrlScan } = useScan();
+  const { runScan, runUrlScan, runBatchScan } = useScan();
   const navigate = useNavigate();
 
   // Responsive Drawer State
@@ -125,14 +125,12 @@ export default function UserDashboard() {
   const handleScanBatch = useCallback(
     async (files, onProgress) => {
       resetScan();
-      for (let i = 0; i < files.length; i++) {
-        if (onProgress) onProgress(i);
-        const file = files[i];
-        setSelectedFile(file);
-        await runScan(file, state.activeTab);
+      if (files && files.length > 0) {
+        setSelectedFile(files[files.length - 1]);
+        await runBatchScan(files, state.activeTab, onProgress);
       }
     },
-    [runScan, resetScan, state.activeTab]
+    [runBatchScan, resetScan, state.activeTab]
   );
 
   const handleUrlScan = (e) => {

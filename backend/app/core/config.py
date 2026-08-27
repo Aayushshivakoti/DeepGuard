@@ -103,3 +103,6 @@ class Settings(BaseSettings):
 
 # Singleton settings instance
 settings = Settings()
+
+# In-memory webhook configuration store
+WEBHOOK_REGISTRY = []
