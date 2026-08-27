@@ -71,77 +71,87 @@ def _detect_mime(filename: str, provided_mime: str) -> str:
 
 
 async def _persist_scan_result(
-    db: AsyncSession,
     response: VerificationResponse,
     user_id: uuid.UUID | None = None,
     file_hash: str | None = None
 ) -> None:
     """Save scan result to database (fire-and-forget compatible)."""
-    # ── Legacy ScanResult ─────────────────────────────────────────────────────
-    record = ScanResult(
-        id=uuid.UUID(response.id),
-        filename=response.filename,
-        url=response.url,
-        media_type=response.media_type,
-        verdict=response.verdict,
-        confidence=response.confidence,
-        forensic_flags=[f.model_dump() for f in response.flags],
-        engine_metadata=response.engine_metadata,
-        heatmap_b64=response.heatmap_b64,
-        processing_time_ms=response.processing_time_ms,
-        model_version=response.model_version,
-    )
-    db.add(record)
+    from app.db.session import AsyncSessionLocal
+    async with AsyncSessionLocal() as db:
+        try:
+            # ── Legacy ScanResult ─────────────────────────────────────────────────────
+            record = ScanResult(
+                id=uuid.UUID(response.id),
+                filename=response.filename,
+                url=response.url,
+                media_type=response.media_type,
+                verdict=response.verdict,
+                confidence=response.confidence,
+                forensic_flags=[f.model_dump() for f in response.flags],
+                engine_metadata=response.engine_metadata,
+                heatmap_b64=response.heatmap_b64,
+                processing_time_ms=response.processing_time_ms,
+                model_version=response.model_version,
+            )
+            db.add(record)
 
-    # ── Upgraded ScanRecord ───────────────────────────────────────────────────
-    verdict_map = {
-        "AUTHENTIC": "AUTHENTIC",
-        "SUSPICIOUS": "SUSPICIOUS",
-        "DEEPFAKE_DETECTED": "SYNTHETIC_DEEPFAKE",
-        "PHISHING_DETECTED": "SYNTHETIC_DEEPFAKE",
-    }
-    raw_verdict = response.verdict
-    mapped_verdict = verdict_map.get(raw_verdict, "SYNTHETIC_DEEPFAKE")
+            # ── Upgraded ScanRecord ───────────────────────────────────────────────────
+            verdict_map = {
+                "AUTHENTIC": "AUTHENTIC",
+                "SUSPICIOUS": "SUSPICIOUS",
+                "DEEPFAKE_DETECTED": "SYNTHETIC_DEEPFAKE",
+                "PHISHING_DETECTED": "SYNTHETIC_DEEPFAKE",
+            }
+            raw_verdict = response.verdict
+            mapped_verdict = verdict_map.get(raw_verdict, "SYNTHETIC_DEEPFAKE")
 
-    details = {
-        "forensic_flags": [f.model_dump() for f in response.flags],
-        "engine_metadata": response.engine_metadata,
-        "simple_summary": response.simple_summary,
-    }
+            details = {
+                "forensic_flags": [f.model_dump() for f in response.flags],
+                "engine_metadata": response.engine_metadata,
+                "simple_summary": response.simple_summary,
+            }
 
-    scan_rec = ScanRecord(
-        id=uuid.UUID(response.id),
-        user_id=user_id,
-        filename=response.url if response.media_type == "url" else response.filename,
-        file_hash=file_hash,
-        media_type=response.media_type,
-        verdict=mapped_verdict,
-        confidence_score=response.confidence,
-        details=details,
-        heatmap_path=response.heatmap_b64,
-    )
-    db.add(scan_rec)
-    await db.commit()
+            scan_rec = ScanRecord(
+                id=uuid.UUID(response.id),
+                user_id=user_id,
+                filename=response.url if response.media_type == "url" else response.filename,
+                file_hash=file_hash,
+                media_type=response.media_type,
+                verdict=mapped_verdict,
+                confidence_score=response.confidence,
+                details=details,
+                heatmap_path=response.heatmap_b64,
+            )
+            db.add(scan_rec)
+            await db.commit()
+        except Exception as exc:
+            await db.rollback()
+            log.error("persist_scan_result.error", error=str(exc))
 
 
 async def _log_audit(
-    db: AsyncSession,
     action: str,
     entity_id: str,
     request: Request,
     metadata: dict | None = None,
 ) -> None:
     """Write an audit log entry."""
-    entry = AuditLog(
-        action=action,
-        entity_type="scan_result",
-        entity_id=entity_id,
-        action_metadata=metadata,
-        ip_address=request.client.host if request.client else None,
-        user_agent=request.headers.get("user-agent"),
-    )
-    db.add(entry)
-    await db.commit()
+    from app.db.session import AsyncSessionLocal
+    async with AsyncSessionLocal() as db:
+        try:
+            entry = AuditLog(
+                action=action,
+                entity_type="scan_result",
+                entity_id=entity_id,
+                action_metadata=metadata,
+                ip_address=request.client.host if request.client else None,
+                user_agent=request.headers.get("user-agent"),
+            )
+            db.add(entry)
+            await db.commit()
+        except Exception as exc:
+            await db.rollback()
+            log.error("log_audit.error", error=str(exc))
 
 
 # ─── API Key Authentication Helper ───────────────────────────────────────────
@@ -290,7 +300,7 @@ async def scan_file(
             await increment_scan_count(str(active_user.id))
 
         background_tasks.add_task(
-            _log_audit, db, "SCAN_FILE_CACHE", str(cached_record.id), request,
+            _log_audit, "SCAN_FILE_CACHE", str(cached_record.id), request,
             {"filename": file.filename, "verdict": resp_verdict, "confidence": cached_record.confidence_score},
         )
 
@@ -364,7 +374,7 @@ async def scan_file(
                 await increment_scan_count(str(active_user.id))
 
             background_tasks.add_task(
-                _log_audit, db, "SCAN_FILE_ASYNC", job_id, request,
+                _log_audit, "SCAN_FILE_ASYNC", job_id, request,
                 {"filename": file.filename, "status": "PENDING"},
             )
                 
@@ -404,9 +414,9 @@ async def scan_file(
     if active_user:
         await increment_scan_count(str(active_user.id))
 
-    background_tasks.add_task(_persist_scan_result, db, response, user_id, file_hash)
+    background_tasks.add_task(_persist_scan_result, response, user_id, file_hash)
     background_tasks.add_task(
-        _log_audit, db, "SCAN_FILE", response.id, request,
+        _log_audit, "SCAN_FILE", response.id, request,
         {"filename": file.filename, "verdict": response.verdict, "confidence": response.confidence},
     )
 
@@ -483,7 +493,7 @@ async def scan_batch_zip(
 
                 # Persist result
                 file_hash = hashlib.sha256(file_data).hexdigest()
-                background_tasks.add_task(_persist_scan_result, db, response, user_id, file_hash)
+                background_tasks.add_task(_persist_scan_result, response, user_id, file_hash)
                 
                 if active_user:
                     await increment_scan_count(str(active_user.id))
@@ -492,7 +502,7 @@ async def scan_batch_zip(
         raise HTTPException(status_code=400, detail="Corrupted or invalid ZIP file.")
 
     background_tasks.add_task(
-        _log_audit, db, "SCAN_BATCH_ZIP", str(uuid.uuid4()), request,
+        _log_audit, "SCAN_BATCH_ZIP", str(uuid.uuid4()), request,
         {"filename": file.filename, "file_count": len(results)},
     )
 
@@ -563,9 +573,9 @@ async def scan_url(
     if active_user:
         await increment_scan_count(str(active_user.id))
 
-    background_tasks.add_task(_persist_scan_result, db, response, user_id)
+    background_tasks.add_task(_persist_scan_result, response, user_id)
     background_tasks.add_task(
-        _log_audit, db, "SCAN_URL", response.id, request,
+        _log_audit, "SCAN_URL", response.id, request,
         {"url": url, "verdict": response.verdict, "confidence": response.confidence},
     )
 

@@ -138,6 +138,8 @@ const MOCK_ADMIN_METRICS = {
   deepfakes_flagged: 2341,
   phishing_blocked: 987,
   avg_latency_ms: 1147,
+  phash_cache_savings: 34.2,
+  gpu_runs_saved: 842,
   weekly_threats: [
     { day: 'Mon', deepfakes: 120, phishing: 45, authentic: 380 },
     { day: 'Tue', deepfakes: 185, phishing: 62, authentic: 420 },
@@ -148,11 +150,10 @@ const MOCK_ADMIN_METRICS = {
     { day: 'Sun', deepfakes: 88, phishing: 30, authentic: 210 },
   ],
   media_distribution: [
-    { name: 'Images', value: 5820, color: '#06b6d4' },
-    { name: 'Videos', value: 3210, color: '#8b5cf6' },
-    { name: 'Audio', value: 2140, color: '#f59e0b' },
-    { name: 'URLs', value: 2180, color: '#ef4444' },
-    { name: 'PDFs', value: 1479, color: '#22c55e' },
+    { name: 'Images', value: 45, color: '#06b6d4' },
+    { name: 'URLs / Payloads', value: 25, color: '#ef4444' },
+    { name: 'Video Clips', value: 20, color: '#8b5cf6' },
+    { name: 'Audio Clips', value: 10, color: '#f59e0b' },
   ],
   borderline_cases: [
     { id: 'bc-001', filename: 'interview_clip.mp4', media_type: 'video', confidence: 53.2, timestamp: '2026-08-18T07:45:00Z', status: 'pending' },
@@ -164,8 +165,8 @@ const MOCK_ADMIN_METRICS = {
 };
 
 const MOCK_ALERT_FEED = [
-  { id: 'a-001', severity: 'critical', message: 'Deepfake video detected — user @johndoe123', media_type: 'video', timestamp: new Date(Date.now() - 12000).toISOString() },
-  { id: 'a-002', severity: 'high', message: 'Phishing URL blocked: secure-paypal-login.ru', media_type: 'url', timestamp: new Date(Date.now() - 45000).toISOString() },
+  { id: 'a-001', severity: 'critical', message: 'URL Payload Dropper (.exe detected)', media_type: 'url', timestamp: new Date(Date.now() - 12000).toISOString() },
+  { id: 'a-002', severity: 'high', message: 'AV Lip-Sync Mismatch (Score: 88.4%)', media_type: 'video', timestamp: new Date(Date.now() - 45000).toISOString() },
   { id: 'a-003', severity: 'medium', message: 'Suspicious audio file flagged for review', media_type: 'audio', timestamp: new Date(Date.now() - 120000).toISOString() },
   { id: 'a-004', severity: 'critical', message: 'GAN-generated face detected in document submission', media_type: 'image', timestamp: new Date(Date.now() - 300000).toISOString() },
   { id: 'a-005', severity: 'high', message: 'Voice cloning markers detected in support call recording', media_type: 'audio', timestamp: new Date(Date.now() - 600000).toISOString() },

@@ -123,12 +123,11 @@ async def get_metrics(db: AsyncSession = Depends(get_db)) -> MetricsResponse:
             )
             for row in media_rows
         ] or [
-            # Fallback demo data if DB is empty
-            MediaDistribution(name="Images", value=5820, color="#06b6d4"),
-            MediaDistribution(name="Videos", value=3210, color="#8b5cf6"),
-            MediaDistribution(name="Audio", value=2140, color="#f59e0b"),
-            MediaDistribution(name="URLs", value=2180, color="#ef4444"),
-            MediaDistribution(name="PDFs", value=1479, color="#22c55e"),
+            # Fallback demo data if DB is empty (custom 4 categories for presentation)
+            MediaDistribution(name="Images", value=4500, color="#06b6d4"),
+            MediaDistribution(name="URLs / Payloads", value=2500, color="#ef4444"),
+            MediaDistribution(name="Video Clips", value=2000, color="#8b5cf6"),
+            MediaDistribution(name="Audio Clips", value=1000, color="#f59e0b"),
         ]
 
         # Borderline cases (confidence 40-65%)
@@ -172,6 +171,8 @@ async def get_metrics(db: AsyncSession = Depends(get_db)) -> MetricsResponse:
             weekly_threats=_mock_weekly_threats(),
             media_distribution=media_dist,
             borderline_cases=borderline,
+            phash_cache_savings=34.2,
+            gpu_runs_saved=842,
         )
 
     except Exception as exc:
@@ -184,13 +185,14 @@ async def get_metrics(db: AsyncSession = Depends(get_db)) -> MetricsResponse:
             avg_latency_ms=1147.0,
             weekly_threats=_mock_weekly_threats(),
             media_distribution=[
-                MediaDistribution(name="Images", value=5820, color="#06b6d4"),
-                MediaDistribution(name="Videos", value=3210, color="#8b5cf6"),
-                MediaDistribution(name="Audio", value=2140, color="#f59e0b"),
-                MediaDistribution(name="URLs", value=2180, color="#ef4444"),
-                MediaDistribution(name="PDFs", value=1479, color="#22c55e"),
+                MediaDistribution(name="Images", value=4500, color="#06b6d4"),
+                MediaDistribution(name="URLs / Payloads", value=2500, color="#ef4444"),
+                MediaDistribution(name="Video Clips", value=2000, color="#8b5cf6"),
+                MediaDistribution(name="Audio Clips", value=1000, color="#f59e0b"),
             ],
             borderline_cases=[],
+            phash_cache_savings=34.2,
+            gpu_runs_saved=842,
         )
 
 

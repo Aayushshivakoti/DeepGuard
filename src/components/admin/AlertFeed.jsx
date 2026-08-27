@@ -79,8 +79,8 @@ export default function AlertFeed({ alerts: initialAlerts = [] }) {
 
   useEffect(() => {
     const LIVE_ALERTS = [
-      { severity: 'critical', message: 'New deepfake video flagged — submission #14832', media_type: 'video' },
-      { severity: 'high', message: 'Phishing URL detected: secure-banklogin.net', media_type: 'url' },
+      { severity: 'critical', message: 'URL Payload Dropper (.exe detected)', media_type: 'url' },
+      { severity: 'high', message: 'AV Lip-Sync Mismatch (Score: 88.4%)', media_type: 'video' },
       { severity: 'medium', message: 'Suspicious audio uploaded for review', media_type: 'audio' },
       { severity: 'critical', message: 'GAN signature detected in identity document', media_type: 'image' },
       { severity: 'high', message: 'Voice clone attempt flagged in customer support call', media_type: 'audio' },

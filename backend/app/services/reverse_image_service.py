@@ -203,7 +203,7 @@ from app.core.config import settings as _settings
 # Simple in-memory cache holding tuples of (phash, response_dict)
 PHASH_RESPONSE_CACHE: List[Tuple[str, Dict[str, Any]]] = []
 
-def lookup_cached_response(phash: str) -> Optional[Dict[str, Any]]:
+def lookup_cached_response(phash: str) -> Optional[Tuple[Dict[str, Any], float]]:
     """
     Search the local cache registry for a similar perceptual hash.
     Verdicts match if the Hamming distance is <= 2.
@@ -214,7 +214,8 @@ def lookup_cached_response(phash: str) -> Optional[Dict[str, Any]]:
     for cached_phash, response_dict in PHASH_RESPONSE_CACHE:
         dist = hamming_distance(phash, cached_phash)
         if dist >= 0 and dist <= 2:
-            return response_dict
+            similarity = 1.0 - (dist / 256.0)
+            return response_dict, similarity
     return None
 
 def cache_response(phash: str, response_dict: Dict[str, Any]):

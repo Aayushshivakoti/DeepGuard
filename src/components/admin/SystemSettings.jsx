@@ -74,6 +74,9 @@ export default function SystemSettings() {
   // Multi-Tenant Isolation & Logging States
   const [auditLogging, setAuditLogging] = useState(true);
   const [tenantIsolation, setTenantIsolation] = useState(true);
+  const [adversarialDefense, setAdversarialDefense] = useState(true);
+  const [phashCacheLookup, setPhashCacheLookup] = useState(true);
+  const [phishingSandbox, setPhishingSandbox] = useState(true);
 
   const handleSave = () => {
     setSaved(true);
@@ -236,6 +239,45 @@ export default function SystemSettings() {
               <div className="text-xs">
                 <p className="font-bold text-slate-300">Forced Cryptographic Tenant Data Isolation</p>
                 <p className="text-[10px] text-slate-500">Encrypt scan histories with org-specific workspace keys.</p>
+              </div>
+            </label>
+
+            <label className="flex items-center gap-2.5 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={adversarialDefense}
+                onChange={() => setAdversarialDefense(!adversarialDefense)}
+                className="rounded border-slate-800 bg-slate-950 text-cyan-500 focus:ring-0 focus:ring-offset-0 w-4 h-4"
+              />
+              <div className="text-xs">
+                <p className="font-bold text-slate-300">Enable Adversarial Noise Preprocessor</p>
+                <p className="text-[10px] text-slate-500">Apply Gaussian blurring and JPEG re-compression to neutralize input attacks.</p>
+              </div>
+            </label>
+
+            <label className="flex items-center gap-2.5 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={phashCacheLookup}
+                onChange={() => setPhashCacheLookup(!phashCacheLookup)}
+                className="rounded border-slate-800 bg-slate-950 text-cyan-500 focus:ring-0 focus:ring-offset-0 w-4 h-4"
+              />
+              <div className="text-xs">
+                <p className="font-bold text-slate-300">Enable pHash Cache Lookup</p>
+                <p className="text-[10px] text-slate-500">Deduplicate similar images via Hamming distance verification to save GPU resources.</p>
+              </div>
+            </label>
+
+            <label className="flex items-center gap-2.5 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={phishingSandbox}
+                onChange={() => setPhishingSandbox(!phishingSandbox)}
+                className="rounded border-slate-800 bg-slate-950 text-cyan-500 focus:ring-0 focus:ring-offset-0 w-4 h-4"
+              />
+              <div className="text-xs">
+                <p className="font-bold text-slate-300">Enable Phishing Sandbox Payload Scanner</p>
+                <p className="text-[10px] text-slate-500">Perform HTTP header checks for suspicious downloadable payloads and binaries.</p>
               </div>
             </label>
           </div>

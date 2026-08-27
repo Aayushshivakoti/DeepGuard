@@ -90,12 +90,16 @@ async def dispatch_file_scan(
         from app.services.reverse_image_service import compute_phash, lookup_cached_response, cache_response
         phash = await anyio.to_thread.run_sync(compute_phash, buffer)
         
-        cached_res_dict = lookup_cached_response(phash)
-        if cached_res_dict is not None:
+        cache_hit_data = lookup_cached_response(phash)
+        if cache_hit_data is not None:
+            cached_res_dict, similarity = cache_hit_data
             # Return cached response instantly (updating ID and timestamp for uniqueness)
             cached_res = VerificationResponse(**cached_res_dict)
             cached_res.id = str(uuid.uuid4())
             cached_res.timestamp = datetime.now(timezone.utc)
+            cached_res.phash_cache_hit = True
+            cached_res.saved_gpu_execution = True
+            cached_res.phash_similarity = similarity
             cached_res.flags.append(ForensicFlag(
                 label="Cache Deduplication Match",
                 severity="low",
@@ -506,6 +510,9 @@ def _build_response(
     spatial_confidence: Optional[float] = None,
     frequency_artifact_score: Optional[float] = None,
     overall_verdict: Optional[VerdictType] = None,
+    phash_cache_hit: bool = False,
+    saved_gpu_execution: bool = False,
+    phash_similarity: Optional[float] = None,
 ) -> VerificationResponse:
     """Build a standardised VerificationResponse."""
     meta = engine_metadata or {}
@@ -516,6 +523,21 @@ def _build_response(
         flags=flags,
         engine_metadata=meta,
     )
+    
+    # Auto-resolve sandbox details from meta
+    sandbox_status = meta.get("sandbox_status", "CLEAN") if media_type == "url" else None
+    detected_payload_type = None
+    if media_type == "url" and sandbox_status == "SUSPICIOUS_PAYLOAD_DETECTED":
+        content_type = meta.get("payload_content_type", "")
+        if "octet-stream" in content_type or "msdownload" in content_type:
+            detected_payload_type = ".exe"
+        elif "pdf" in content_type:
+            detected_payload_type = ".pdf"
+        elif "android" in content_type:
+            detected_payload_type = ".apk"
+        else:
+            detected_payload_type = ".exe"
+
     return VerificationResponse(
         id=str(uuid.uuid4()),
         verdict=verdict,  # type: ignore[arg-type]
@@ -534,4 +556,9 @@ def _build_response(
         frequency_artifact_score=frequency_artifact_score,
         overall_verdict=overall_verdict if overall_verdict is not None else verdict,
         timestamp=datetime.now(timezone.utc),
+        phash_cache_hit=phash_cache_hit,
+        saved_gpu_execution=saved_gpu_execution,
+        phash_similarity=phash_similarity,
+        sandbox_status=sandbox_status,
+        detected_payload_type=detected_payload_type,
     )

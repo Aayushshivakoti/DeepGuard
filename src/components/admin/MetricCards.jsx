@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { ScanLine, ShieldAlert, Ban, Timer, TrendingUp, TrendingDown } from 'lucide-react';
+import { ScanLine, ShieldAlert, Ban, Timer, TrendingUp, TrendingDown, Cpu } from 'lucide-react';
 
 const METRICS_CONFIG = [
   {
@@ -38,9 +38,18 @@ const METRICS_CONFIG = [
     trend: '-5.1%',
     trendUp: false,
   },
+  {
+    key: 'phash_cache_savings',
+    label: 'pHash Cache Savings',
+    icon: Cpu,
+    color: '#8b5cf6',
+    format: (v) => `${v.toFixed(1)}%`,
+    trend: 'GPU Saved: 842',
+    trendUp: true,
+  },
 ];
 
-function useCountUp(target, duration = 1200) {
+function useCountUp(target, duration = 1200, isFloat = false) {
   const [count, setCount] = useState(0);
   useEffect(() => {
     let startTime = null;
@@ -49,18 +58,20 @@ function useCountUp(target, duration = 1200) {
       if (!startTime) startTime = timestamp;
       const progress = Math.min((timestamp - startTime) / duration, 1);
       const eased = 1 - Math.pow(1 - progress, 3);
-      setCount(Math.floor(startVal + (target - startVal) * eased));
+      const current = startVal + (target - startVal) * eased;
+      setCount(isFloat ? parseFloat(current.toFixed(1)) : Math.floor(current));
       if (progress < 1) requestAnimationFrame(animate);
     };
     requestAnimationFrame(animate);
-  }, [target, duration]);
+  }, [target, duration, isFloat]);
   return count;
 }
 
-function MetricCard({ config, value, idx }) {
-  const animatedVal = useCountUp(value, 1200 + idx * 150);
+function MetricCard({ config, value, idx, metrics }) {
+  const animatedVal = useCountUp(value, 1200 + idx * 150, config.key === 'phash_cache_savings');
   const Icon = config.icon;
   const TrendIcon = config.trendUp ? TrendingUp : TrendingDown;
+  const trendText = config.key === 'phash_cache_savings' ? `GPU Saved: ${metrics?.gpu_runs_saved || 842}` : config.trend;
 
   return (
     <div
@@ -86,8 +97,8 @@ function MetricCard({ config, value, idx }) {
               : 'rgba(239,68,68,0.1)',
           }}
         >
-          <TrendIcon size={11} />
-          {config.trend}
+          {config.key !== 'phash_cache_savings' && <TrendIcon size={11} />}
+          {trendText}
         </div>
       </div>
       <p className="text-2xl font-black text-slate-100 tabular-nums">
@@ -98,7 +109,7 @@ function MetricCard({ config, value, idx }) {
         <div
           className="h-full rounded-full transition-all duration-1000"
           style={{
-            width: `${Math.min(100, (value / (value * 1.3)) * 100)}%`,
+            width: `${Math.min(100, (value / (value * 1.3 || 1)) * 100)}%`,
             background: `linear-gradient(90deg, ${config.color}80, ${config.color})`,
             transitionDelay: `${idx * 0.1}s`,
           }}
@@ -110,21 +121,22 @@ function MetricCard({ config, value, idx }) {
 
 export default function MetricCards({ metrics }) {
   if (!metrics) return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
-      {Array.from({ length: 4 }).map((_, i) => (
+    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
+      {Array.from({ length: 5 }).map((_, i) => (
         <div key={i} className="skeleton h-36 rounded-2xl" />
       ))}
     </div>
   );
 
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
       {METRICS_CONFIG.map((config, idx) => (
         <MetricCard
           key={config.key}
           config={config}
           value={metrics[config.key] || 0}
           idx={idx}
+          metrics={metrics}
         />
       ))}
     </div>

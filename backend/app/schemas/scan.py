@@ -60,6 +60,13 @@ class VerificationResponse(BaseModel):
     engine_metadata: Optional[dict] = Field(None, description="Per-engine raw analysis metadata")
     simple_summary: Optional[dict] = Field(None, description="Plain-language Explainable AI summary")
 
+    # ── Enterprise Analytics ──────────────────────────────────────────────────
+    phash_cache_hit: bool = Field(default=False, description="pHash Cache Hit flag")
+    saved_gpu_execution: bool = Field(default=False, description="Indicates if GPU execution was skipped due to cache hit")
+    phash_similarity: Optional[float] = Field(default=None, description="Similarity score of the cache hit")
+    sandbox_status: Optional[str] = Field(default=None, description="Malicious download payload sandbox status")
+    detected_payload_type: Optional[str] = Field(default=None, description="File type of payload detected")
+
     # ── Performance ───────────────────────────────────────────────────────────
     processing_time_ms: int = Field(..., description="Total processing time in milliseconds")
     model_version: str = Field(default="DeepGuard-v3.1", description="Model version used")

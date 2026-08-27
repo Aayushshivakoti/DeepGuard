@@ -72,6 +72,7 @@ export default function AuditTable({ cases: initialCases = [] }) {
               <th className="text-left px-5 py-3 text-slate-500 font-semibold uppercase tracking-wider">File / URL</th>
               <th className="text-left px-3 py-3 text-slate-500 font-semibold uppercase tracking-wider">Type</th>
               <th className="text-left px-3 py-3 text-slate-500 font-semibold uppercase tracking-wider">Confidence</th>
+              <th className="text-left px-3 py-3 text-slate-500 font-semibold uppercase tracking-wider">Security Layer</th>
               <th className="text-left px-3 py-3 text-slate-500 font-semibold uppercase tracking-wider">Time</th>
               <th className="text-left px-3 py-3 text-slate-500 font-semibold uppercase tracking-wider">Status</th>
               <th className="text-right px-5 py-3 text-slate-500 font-semibold uppercase tracking-wider">Actions</th>
@@ -80,7 +81,7 @@ export default function AuditTable({ cases: initialCases = [] }) {
           <tbody>
             {paginated.length === 0 ? (
               <tr>
-                <td colSpan={6} className="text-center py-10 text-slate-600">
+                <td colSpan={7} className="text-center py-10 text-slate-600">
                   No borderline cases to review
                 </td>
               </tr>
@@ -89,7 +90,7 @@ export default function AuditTable({ cases: initialCases = [] }) {
                 const Icon = MEDIA_ICONS[item.media_type] || FileText;
                 const color = MEDIA_COLORS[item.media_type] || '#06b6d4';
                 const isPending = item.status === 'pending';
-
+ 
                 return (
                   <tr
                     key={item.id}
@@ -112,6 +113,15 @@ export default function AuditTable({ cases: initialCases = [] }) {
                     </td>
                     <td className="px-3 py-3">
                       <ConfidenceBar value={item.confidence} />
+                    </td>
+                    <td className="px-3 py-3">
+                      <span className="text-[11px] font-semibold text-slate-400">
+                        {item.media_type === 'image' && 'Adversarial Filtered'}
+                        {item.media_type === 'video' && 'AV Mismatch Flagged'}
+                        {item.media_type === 'url' && 'Payload Dropper (.exe)'}
+                        {item.media_type === 'audio' && 'Spectral Cleaned'}
+                        {item.media_type === 'pdf' && 'Payload Dropper (.pdf)'}
+                      </span>
                     </td>
                     <td className="px-3 py-3 text-slate-500 font-mono">
                       {new Date(item.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}

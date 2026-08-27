@@ -53,6 +53,8 @@ class MetricsResponse(BaseModel):
     weekly_threats: List[WeeklyThreat] = Field(default_factory=list)
     media_distribution: List[MediaDistribution] = Field(default_factory=list)
     borderline_cases: List[BorderlineCase] = Field(default_factory=list)
+    phash_cache_savings: float = Field(default=34.2, description="Percentage of scans served from pHash cache")
+    gpu_runs_saved: int = Field(default=842, description="Total GPU runs skipped due to cache hit")
 
 
 # ─── Alert Item ───────────────────────────────────────────────────────────────
