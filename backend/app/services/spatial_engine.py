@@ -595,14 +595,15 @@ async def analyze_image(buffer: bytes) -> ImageAnalysisResult:
 
     # ── Step 1: FFT Analysis ──────────────────────────────────────────────────
     fft_score, magnitude = _fft_anomaly_score(pil_img)
-    if fft_score > 0.6:
+    # Increase sensitivity: lower thresholds for flagging high-frequency anomalies
+    if fft_score > 0.5:
         flags.append(ForensicFlag(
             label="Frequency Noise Anomaly",
             severity="high",
             description=f"Irregular high-frequency artifacts detected (score: {fft_score:.2f}). "
                         "Consistent with GAN/Diffusion rendering boundary artifacts.",
         ))
-    elif fft_score > 0.35:
+    elif fft_score > 0.25:
         flags.append(ForensicFlag(
             label="Minor Frequency Anomaly",
             severity="low",
@@ -611,7 +612,8 @@ async def analyze_image(buffer: bytes) -> ImageAnalysisResult:
 
     # ── Step 1b: DCT Analysis (Discrete Cosine Transform) ─────────────────────
     dct_score = _dct_anomaly_score(pil_img)
-    if dct_score > 0.85:
+    # Increase DCT sensitivity
+    if dct_score > 0.75:
         flags.append(ForensicFlag(
             label="Discrete Cosine Transform Anomaly",
             severity="medium",
@@ -766,7 +768,7 @@ def _heuristic_score(fft_score: float, face_count: int) -> float:
     Combines FFT anomaly score with presence/absence of faces.
     """
     # Scale down the FFT anomaly contribution to avoid false positives in dev/mock environment
-    base = fft_score * 20.0
+    base = fft_score * 28.0
     # Keep face presence neutral for deepfake likelihood
     noise = np.random.uniform(-2.0, 2.0)
     return float(np.clip(base + noise, 5.0, 97.0))

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import time
 import uuid
+from app.db.session import AsyncSessionLocal
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -474,12 +475,26 @@ async def dispatch_url_scan(url: str) -> VerificationResponse:
         metadata_score=final_score,
         channels=["url"]
     )
-    if final_score >= 65:
-        verdict = "PHISHING_DETECTED"
-    elif final_score >= 35:
+    if final_score >= 70:
+        verdict = "DEEPFAKE_DETECTED"
+    elif final_score >= 40:
         verdict = "SUSPICIOUS"
     else:
         verdict = "AUTHENTIC"
+
+    # Log medium‑confidence scans (40‑60) for active learning
+    if 40.0 <= final_score <= 60.0:
+        from app.db.models.retrain_queue import RetrainQueue
+        from app.db.database import AsyncSessionLocal
+        async with AsyncSessionLocal() as db:
+            entry = RetrainQueue(
+                scan_id=str(uuid.uuid4()),
+                media_path=url,
+                initial_risk_score=final_score,
+                confidence_band="medium",
+            )
+            db.add(entry)
+            await db.commit()
 
     return _build_response(
         verdict=verdict,

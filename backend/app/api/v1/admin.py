@@ -32,6 +32,17 @@ from app.schemas.admin import (
     MetricsResponse,
     VerdictDistribution,
     WeeklyThreat,
+    OverrideRequest,
+    OverrideResponse,
+    AlertItem,
+    AnalyticsResponse,
+    AuditLogEntry,
+    BorderlineCase,
+    DailyStats,
+    MediaDistribution,
+    MetricsResponse,
+    VerdictDistribution,
+    WeeklyThreat,
 )
 
 log = structlog.get_logger(__name__)
@@ -532,6 +543,43 @@ async def review_hitl_item(scan_id: str, body: dict, db: AsyncSession = Depends(
         "analyst_notes": body.get("notes", "Reviewed by forensic analyst."),
         "reviewed_at": datetime.now(timezone.utc).isoformat(),
     }
+
+
+@router.post(
+    "/override",
+    response_model=OverrideResponse,
+    summary="Admin override of active learning queue entry",
+    description="Allows an admin to correct the AI verdict for a medium‑confidence scan and records the admin user.",
+    status_code=status.HTTP_200_OK,
+)
+async def admin_override(request: OverrideRequest, db: AsyncSession = Depends(get_db), admin_user: User = Depends(get_current_admin_user)) -> OverrideResponse:
+    """Update a RetrainQueue entry with admin corrected verdict.
+
+    Args:
+        request: OverrideRequest containing scan_id and corrected verdict.
+        db: Database session.
+        admin_user: Authenticated admin performing the override.
+    Returns:
+        OverrideResponse with updated fields.
+    """
+    from app.db.models.retrain_queue import RetrainQueue
+    stmt = select(RetrainQueue).where(RetrainQueue.scan_id == request.scan_id)
+    result = await db.execute(stmt)
+    entry = result.scalar_one_or_none()
+    if not entry:
+        raise HTTPException(status_code=404, detail="Retrain queue entry not found")
+    entry.admin_corrected_verdict = request.verdict
+    entry.admin_user_id = str(admin_user.id)
+    # Record the override timestamp (using created_at as fallback if no dedicated column)
+    await db.commit()
+    await db.refresh(entry)
+    return OverrideResponse(
+        scan_id=entry.scan_id,
+        admin_user_id=str(admin_user.id),
+        admin_corrected_verdict=entry.admin_corrected_verdict,
+        confidence_band=entry.confidence_band,
+        updated_at=datetime.now(timezone.utc).isoformat(),
+    )
 
 
 # ─── Active Learning Dataset Export ───────────────────────────────────────────

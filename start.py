@@ -25,7 +25,7 @@ def resolve_python():
     return sys.executable
 
 def check_and_setup_env(base_python):
-    print("\n📦 [1/3] Checking Environment & Dependencies Safely...")
+    print("\n[1/3] Checking Environment & Dependencies Safely...")
     
     # Copy .env
     backend_env = os.path.join(BACKEND_DIR, ".env")
@@ -67,17 +67,17 @@ def check_and_setup_env(base_python):
     return venv_py
 
 def init_database(venv_py):
-    print("\n🗄️ [2/3] Initializing Database...")
+    print("\n[2/3] Initializing Database...")
     try:
         env = os.environ.copy()
         env["PYTHONPATH"] = BACKEND_DIR
         subprocess.run([venv_py, "-m", "app.db.init_db"], cwd=BACKEND_DIR, env=env, check=False)
-        print("✅ Database ready.")
+        print("Database ready.")
     except Exception as e:
-        print(f"⚠️ Notice: {e}")
+        print(f"Notice: {e}")
 
 def launch_services(venv_py):
-    print("\n⚡ [3/3] Spawning Lightweight Stack Services...")
+    print("\n[3/3] Spawning Lightweight Stack Services...")
     
     processes = []
     env = os.environ.copy()
@@ -114,23 +114,23 @@ def launch_services(venv_py):
 
         time.sleep(2)
         print("\n" + "="*60)
-        print("  🎉 DEEPGUARD STACK OPERATIONAL (SAFE DEV MODE)")
+        print("  DEEPGUARD STACK OPERATIONAL (SAFE DEV MODE)")
         print("="*60)
-        print("  💻 REACT DASHBOARD:    http://localhost:5173")
-        print("  📚 API SWAGGER DOCS:   http://localhost:8000/docs")
-        print("  🔑 ADMIN ACCOUNT:      admin@example.com / AdminPass123!")
+        print("  REACT DASHBOARD:    http://localhost:5173")
+        print("  API SWAGGER DOCS:   http://localhost:8000/docs")
+        print("  ADMIN ACCOUNT:      admin@example.com / AdminPass123!")
         print("="*60 + "\n")
 
         while True:
             time.sleep(1)
 
     except KeyboardInterrupt:
-        print("\n🛑 Stopping all services...")
+        print("\nStopping all services...")
         for p in processes:
             p.terminate()
         for p in processes:
             p.wait()
-        print("👋 Services stopped safely.")
+        print("Services stopped safely.")
 
 if __name__ == "__main__":
     py_cmd = resolve_python()

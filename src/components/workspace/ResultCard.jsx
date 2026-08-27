@@ -522,7 +522,7 @@ export default function ResultCard({ result, onReset, isMock }) {
                   </h4>
                   <div className="h-44 w-full bg-slate-950/65 border border-slate-900 rounded-xl p-3">
                     <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={(result.fft_spectral_noise || [0.12, 0.18, 0.25, 0.55, 0.85, 0.44, 0.23, 0.15, 0.08, 0.04]).map((val, i) => ({ bin: `Bin ${i+1}`, Anomaly: val * 100 })}>
+                      <BarChart data={(result.fft_spectral_noise || [0.12, 0.18, 0.25, 0.55, 0.85, 0.44, 0.23, 0.15, 0.08, 0.04]).map((val, i) => ({ bin: `Bin ${i+1}`, Anomaly: val * 100 }))}>
                         <XAxis dataKey="bin" stroke="#475569" fontSize={8} />
                         <YAxis stroke="#475569" fontSize={8} unit="%" />
                         <Tooltip contentStyle={{ background: '#090d16', border: '1px solid #1e293b', borderRadius: '8px', fontSize: '10px' }} />

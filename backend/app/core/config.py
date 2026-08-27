@@ -64,6 +64,12 @@ class Settings(BaseSettings):
     AUDIO_MODEL_PATH: str = "weights/voice_clone_detector.pt"
     TEXT_MODEL_PATH: str = "gpt2"
     USE_MOCK_MODELS: bool = True
+    # Paths to optional sub-models for generator routing (empty if not used)
+    SUBMODEL_FLUX_PATH: str = ""
+    SUBMODEL_GRID_PATH: str = ""
+    SUBMODEL_GAN_PATH: str = ""
+    SUBMODEL_DIFFUSION_GRID_PATH: str = ""
+    SUBMODEL_GAN_FACE_SWAP_PATH: str = ""
     ONNX_QUANTIZATION_MODE: str = "none"  # none | fp16 | int8
     DEEPFAKE_CLASS_INDEX: int = 1  # Index of deepfake class in model output
 

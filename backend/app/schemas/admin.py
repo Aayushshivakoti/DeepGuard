@@ -9,6 +9,19 @@ from typing import List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
+class OverrideRequest(BaseModel):
+    """Payload for admin override of a retrain queue entry."""
+    scan_id: str = Field(..., description="UUID of the retrain queue entry to override")
+    verdict: str = Field(..., description="Corrected verdict, e.g., AUTHENTIC, DEEPFAKE_DETECTED, PHISHING_DETECTED")
+
+class OverrideResponse(BaseModel):
+    """Result of an admin override operation."""
+    scan_id: str
+    admin_user_id: str | None = None
+    admin_corrected_verdict: str
+    confidence_band: str
+    updated_at: str = Field(..., description="Timestamp of the override operation")
+
 
 # ─── Weekly Threat Data ───────────────────────────────────────────────────────
 

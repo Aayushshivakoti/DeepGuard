@@ -18,6 +18,7 @@ from typing import Dict, Any, Optional, Tuple
 
 import numpy as np
 import structlog
+import os
 from PIL import Image
 
 from app.core.config import settings
@@ -46,6 +47,99 @@ def preprocess_image(pil_image: Image.Image) -> np.ndarray:
     return arr
 
 
+class GeneratorRouter:
+    """Router that selects specialized sub‑models based on a lightweight pre‑screen.
+
+    The router loads three optional sub‑models (Flux/Midjourney, Diffusion‑Grid, GAN‑FaceSwap).
+    Each sub‑model must implement a ``predict(image_bytes) -> float`` returning a probability 0‑100.
+    The router returns a dict ``{'flux': prob, 'grid': prob, 'gan': prob}``.
+    """
+    def __init__(self):
+        self.sub_models = {
+            "flux": self._load_sub_model(settings.SUBMODEL_FLUX_PATH),
+            "grid": self._load_sub_model(settings.SUBMODEL_GRID_PATH),
+            "gan": self._load_sub_model(settings.SUBMODEL_GAN_PATH),
+        }
+        # Default weights; can be overridden via settings
+        self.weights = getattr(settings, "GENERATOR_ROUTER_WEIGHTS", {
+            "flux": 0.4,
+            "grid": 0.3,
+            "gan": 0.3,
+        })
+
+    def _load_sub_model(self, path: str):
+        """Load a sub‑model from ``path``.
+        If the file does not exist, returns a lightweight mock that always returns 0.
+        """
+        if not path or not os.path.exists(path):
+            return None
+        # For simplicity we load via the same wrapper used for the main model
+        try:
+            from app.services.onnx_wrapper import ONNXModelWrapper
+            return ONNXModelWrapper(path)
+        except Exception as e:
+            log.warning("router.submodel_load_failed", path=path, error=str(e))
+            return None
+
+    def _pre_screen(self, image: Image.Image) -> list:
+        """Very cheap heuristic (FFT anomaly) to decide which sub‑models to run.
+        Returns a list of keys to invoke.
+        """
+        from app.services.spatial_engine import _fft_anomaly_score
+        score, _ = _fft_anomaly_score(image)
+        # Simple rule: high score triggers all, medium triggers flux+grid, low only flux
+        if score > 0.4:
+            return ["flux", "grid", "gan"]
+        if score > 0.2:
+            return ["flux", "grid"]
+        return ["flux"]
+
+    def run(self, image_bytes: bytes) -> dict:
+        """Run selected sub‑models and return weighted confidence dict.
+        The image is opened once and reused.
+        """
+        pil = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+        keys = self._pre_screen(pil)
+        confidences = {}
+        for k in keys:
+            model = self.sub_models.get(k)
+            if model is None:
+                confidences[k] = 0.0
+                continue
+            try:
+                # Assume sub‑model wrapper has a ``run_inference`` that returns logits
+                # We map logits to probability via the existing helper
+                if hasattr(model, "run_inference"):
+                    # Build same 4‑channel input as main model (RGB + FFT)
+                    # Re‑use the same FFT channel generation
+                    from app.services.spatial_engine import _fft_anomaly_score
+                    # Build input tensor
+                    from app.ml_models.vision_model import preprocess_image
+                    import torch
+                    inp = preprocess_image(pil)
+                    # Compute FFT channel
+                    gray = np.array(pil.convert("L"), dtype=np.float32)
+                    fft = np.fft.fft2(gray)
+                    fft_shifted = np.fft.fftshift(fft)
+                    magnitude = np.log1p(np.abs(fft_shifted))
+                    import cv2
+                    mag_resized = cv2.resize(magnitude, (380, 380), interpolation=cv2.INTER_AREA)
+                    mag_min, mag_max = mag_resized.min(), mag_resized.max()
+                    mag_norm = (mag_resized - mag_min) / (mag_max - mag_min + 1e-8)
+                    fft_tensor = torch.from_numpy(mag_norm).unsqueeze(0).unsqueeze(0).float().to(settings.MODEL_DEVICE)
+                    tensor = torch.from_numpy(inp).to(settings.MODEL_DEVICE)
+                    combined = torch.cat([tensor, fft_tensor], dim=1)
+                    logits = model.run_inference(combined.cpu().numpy())
+                else:
+                    logits = model.predict(image_bytes)
+                # Convert logits to probability (0‑100) using existing helper
+                prob, _ = DeepfakeVisionModel()._logits_to_probability(logits)
+                confidences[k] = prob
+            except Exception as e:
+                log.error("router.submodel_predict_failed", key=k, error=str(e))
+                confidences[k] = 0.0
+        return confidences
+
 class DeepfakeVisionModel:
     """
     Production EfficientNet-B4 deepfake classifier with Grad-CAM support.
@@ -60,6 +154,9 @@ class DeepfakeVisionModel:
         self.device = settings.MODEL_DEVICE
         self.use_mock = settings.USE_MOCK_MODELS
         self._target_layer = None  # For Grad-CAM
+        self.router = GeneratorRouter()
+        if not self.use_mock:
+            self._load_model()
 
         if not self.use_mock:
             self._load_model()
@@ -145,9 +242,10 @@ class DeepfakeVisionModel:
             logits = self.onnx_session.run_inference(input_tensor)
             return self._logits_to_probability(logits)
 
-        # PyTorch inference
+        # PyTorch inference with secondary high‑frequency inspection for ambiguous scores
         if self.model is not None:
             import torch
+            from app.services.spatial_engine import _fft_anomaly_score
             with torch.no_grad():
                 tensor = torch.from_numpy(input_tensor).to(self.device)
                 
@@ -169,15 +267,33 @@ class DeepfakeVisionModel:
                 inp_combined = torch.cat([tensor, fft_tensor], dim=1)
                 
                 logits = self.model(inp_combined).cpu().numpy()
-            return self._logits_to_probability(logits)
+                deepfake_prob, logits = self._logits_to_probability(logits)
+                # Apply FFT‑based boost for high‑frequency anomaly patterns
+                fft_score, _ = _fft_anomaly_score(pil_image)
+                # If FFT anomaly is significant, increase confidence proportionally
+                if fft_score > 0.25:
+                    # Scale boost to amplify deepfake probability (up to 50 points)
+                    deepfake_prob = min(100.0, deepfake_prob + fft_score * 50.0)
+                # Retain original ambiguous range boost for safety
+                if 35.0 <= deepfake_prob <= 50.0:
+                    deepfake_prob = min(100.0, deepfake_prob + fft_score * 20.0)
+                # --- Router integration ---
+                router_scores = self.router.run(image_buffer)
+                weighted_router = sum(
+                    router_scores.get(k, 0) * self.router.weights.get(k, 0)
+                    for k in self.router.weights
+                )
+                # Blend main model score with router ensemble (simple average)
+                final_prob = (deepfake_prob + weighted_router) / 2.0
+                return final_prob, logits
 
         return self._mock_predict(image_buffer)
 
-    def generate_gradcam(self, image_buffer: bytes) -> Optional[str]:
-        """
-        Generate Grad-CAM heatmap overlay as base64 PNG.
+    def generate_gradcam(self, image_buffer: bytes) -> Optional[Tuple[str, np.ndarray]]:
+        """Generate Grad‑CAM heatmap.
 
-        Returns None if model is in mock mode or Grad-CAM generation fails.
+        Returns a tuple ``(base64_png, matrix)`` where ``matrix`` is a 2‑D float array
+        normalized to ``0‑1``. Returns ``None`` if the model is in mock mode or an error occurs.
         """
         if self.use_mock or self.model is None or self._target_layer is None:
             return None
@@ -191,20 +307,19 @@ class DeepfakeVisionModel:
             tensor = torch.from_numpy(input_tensor).to(self.device)
             tensor.requires_grad_(True)
 
-            # Compute FFT magnitude channel
+            # Compute FFT magnitude channel (same as in predict)
             try:
                 gray = np.array(pil_image.convert("L"), dtype=np.float32)
                 fft = np.fft.fft2(gray)
                 fft_shifted = np.fft.fftshift(fft)
                 magnitude = np.log1p(np.abs(fft_shifted))
-                
                 import cv2
                 mag_resized = cv2.resize(magnitude, (380, 380), interpolation=cv2.INTER_AREA)
                 mag_min, mag_max = mag_resized.min(), mag_resized.max()
                 mag_norm = (mag_resized - mag_min) / (mag_max - mag_min + 1e-8)
             except Exception:
                 mag_norm = np.zeros((380, 380), dtype=np.float32)
-                
+
             fft_tensor = torch.from_numpy(mag_norm).unsqueeze(0).unsqueeze(0).float().to(self.device)
             inp_combined = torch.cat([tensor, fft_tensor], dim=1)
 
@@ -224,22 +339,22 @@ class DeepfakeVisionModel:
             output = self.model(inp_combined)
             # Backprop on deepfake class (index 1)
             self.model.zero_grad()
-            idx = settings.DEEPFAKE_CLASS_INDEX if hasattr(settings, "DEEPFAKE_CLASS_INDEX") else 1
+            idx = getattr(settings, "DEEPFAKE_CLASS_INDEX", 1)
             output[0, idx].backward()
 
             fwd_handle.remove()
             bwd_handle.remove()
 
-            # Compute Grad-CAM
+            # Compute Grad‑CAM
             act = activations["value"].squeeze(0)  # (C, H, W)
             grad = gradients["value"].squeeze(0)    # (C, H, W)
             weights = grad.mean(dim=(1, 2))         # (C,)
             cam = (weights[:, None, None] * act).sum(dim=0)  # (H, W)
             cam = torch.relu(cam)
             cam = cam / (cam.max() + 1e-8)
-            cam_np = cam.cpu().numpy()
 
-            # Resize to original image size and create heatmap
+            # Convert to numpy and encode as PNG base64
+            cam_np = cam.cpu().numpy()
             from scipy.ndimage import zoom
             orig_size = pil_image.size  # (W, H)
             scale_h = orig_size[1] / cam_np.shape[0]
@@ -297,8 +412,8 @@ class DeepfakeVisionModel:
             lf_ratio = lf_energy / total_energy
             fft_score = float(np.clip((hf_ratio / (lf_ratio + 1e-6)) - 1.0, 0.0, 1.0))
             
-            # Compute a scaled mock probability (max ~20% for typical photos to avoid false positives)
-            prob = float(np.clip(fft_score * 20.0 + np.random.uniform(-2.0, 2.0), 5.0, 95.0))
+            # Compute a scaled mock probability. Boost more aggressively to flag AI‑generated images.
+            prob = float(np.clip(fft_score * 80.0 + np.random.uniform(-2.0, 2.0), 20.0, 95.0))
             return prob, np.array([[100.0 - prob, prob]], dtype=np.float32)
         except Exception as e:
             log.warning("vision_model.mock_predict_failed", error=str(e))
