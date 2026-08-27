@@ -125,7 +125,12 @@ async def dispatch_file_scan(
             if has_high_severity:
                 metadata_score = 70.0  # Editing/AI software detected in EXIF
             elif meta_flags:
-                metadata_score = 20.0  # Minor issues like missing EXIF (very common for normal photos)
+                # Differentiate missing EXIF from actual edit indicators
+                is_only_missing = all(
+                    (f.label if hasattr(f, 'label') else f.get('label', '')) in ("No EXIF Metadata", "Missing Camera Hardware Signature")
+                    for f in meta_flags
+                )
+                metadata_score = 8.0 if is_only_missing else 20.0  # Lighter penalty for missing EXIF (common for normal photos)
             else:
                 metadata_score = 5.0   # Clean metadata
         else:

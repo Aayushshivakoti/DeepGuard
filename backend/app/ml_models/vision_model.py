@@ -86,6 +86,18 @@ class DeepfakeVisionModel:
                 import torchvision.models as models
 
                 self.model = models.efficientnet_b4(weights=None)
+                
+                # Adapt first conv layer to accept 4 channels (RGB + FFT)
+                original_conv = self.model.features[0][0]
+                self.model.features[0][0] = torch.nn.Conv2d(
+                    in_channels=4,
+                    out_channels=original_conv.out_channels,
+                    kernel_size=original_conv.kernel_size,
+                    stride=original_conv.stride,
+                    padding=original_conv.padding,
+                    bias=original_conv.bias is not None
+                )
+
                 # Replace classifier head for 2-class output
                 in_features = self.model.classifier[1].in_features
                 self.model.classifier = torch.nn.Sequential(
@@ -93,6 +105,13 @@ class DeepfakeVisionModel:
                     torch.nn.Linear(in_features, 2),
                 )
                 state_dict = torch.load(weight_path, map_location=self.device, weights_only=True)
+                if "features.0.0.weight" in state_dict:
+                    w = state_dict["features.0.0.weight"]
+                    if w.shape[1] == 3:
+                        new_w = torch.zeros((w.shape[0], 4, w.shape[2], w.shape[3]), device=w.device)
+                        new_w[:, :3] = w
+                        new_w[:, 3] = w.mean(dim=1)
+                        state_dict["features.0.0.weight"] = new_w
                 self.model.load_state_dict(state_dict, strict=False)
                 self.model.to(self.device)
                 self.model.eval()
@@ -131,7 +150,25 @@ class DeepfakeVisionModel:
             import torch
             with torch.no_grad():
                 tensor = torch.from_numpy(input_tensor).to(self.device)
-                logits = self.model(tensor).cpu().numpy()
+                
+                # Compute FFT magnitude channel
+                try:
+                    gray = np.array(pil_image.convert("L"), dtype=np.float32)
+                    fft = np.fft.fft2(gray)
+                    fft_shifted = np.fft.fftshift(fft)
+                    magnitude = np.log1p(np.abs(fft_shifted))
+                    
+                    import cv2
+                    mag_resized = cv2.resize(magnitude, (380, 380), interpolation=cv2.INTER_AREA)
+                    mag_min, mag_max = mag_resized.min(), mag_resized.max()
+                    mag_norm = (mag_resized - mag_min) / (mag_max - mag_min + 1e-8)
+                except Exception:
+                    mag_norm = np.zeros((380, 380), dtype=np.float32)
+                
+                fft_tensor = torch.from_numpy(mag_norm).unsqueeze(0).unsqueeze(0).float().to(self.device)
+                inp_combined = torch.cat([tensor, fft_tensor], dim=1)
+                
+                logits = self.model(inp_combined).cpu().numpy()
             return self._logits_to_probability(logits)
 
         return self._mock_predict(image_buffer)
@@ -154,6 +191,23 @@ class DeepfakeVisionModel:
             tensor = torch.from_numpy(input_tensor).to(self.device)
             tensor.requires_grad_(True)
 
+            # Compute FFT magnitude channel
+            try:
+                gray = np.array(pil_image.convert("L"), dtype=np.float32)
+                fft = np.fft.fft2(gray)
+                fft_shifted = np.fft.fftshift(fft)
+                magnitude = np.log1p(np.abs(fft_shifted))
+                
+                import cv2
+                mag_resized = cv2.resize(magnitude, (380, 380), interpolation=cv2.INTER_AREA)
+                mag_min, mag_max = mag_resized.min(), mag_resized.max()
+                mag_norm = (mag_resized - mag_min) / (mag_max - mag_min + 1e-8)
+            except Exception:
+                mag_norm = np.zeros((380, 380), dtype=np.float32)
+                
+            fft_tensor = torch.from_numpy(mag_norm).unsqueeze(0).unsqueeze(0).float().to(self.device)
+            inp_combined = torch.cat([tensor, fft_tensor], dim=1)
+
             # Forward pass with gradient tracking
             activations = {}
             gradients = {}
@@ -167,7 +221,7 @@ class DeepfakeVisionModel:
             fwd_handle = self._target_layer.register_forward_hook(forward_hook)
             bwd_handle = self._target_layer.register_full_backward_hook(backward_hook)
 
-            output = self.model(tensor)
+            output = self.model(inp_combined)
             # Backprop on deepfake class (index 1)
             self.model.zero_grad()
             idx = settings.DEEPFAKE_CLASS_INDEX if hasattr(settings, "DEEPFAKE_CLASS_INDEX") else 1

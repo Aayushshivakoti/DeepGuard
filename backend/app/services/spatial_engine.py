@@ -278,14 +278,15 @@ def _fft_anomaly_score(pil_img: Image.Image) -> Tuple[float, Optional[np.ndarray
         high_freq_mask = dist > (0.7 * max_dist)
         low_freq_mask = dist <= (0.3 * max_dist)
 
-        hf_energy = magnitude[high_freq_mask].sum()
-        lf_energy = magnitude[low_freq_mask].sum()
-        total_energy = magnitude.sum() + 1e-8
+        hf_mean = magnitude[high_freq_mask].mean()
+        lf_mean = magnitude[low_freq_mask].mean()
 
-        # Synthetic images have anomalously elevated HF/LF ratio
-        hf_ratio = hf_energy / total_energy
-        lf_ratio = lf_energy / total_energy
-        anomaly = float(np.clip((hf_ratio / (lf_ratio + 1e-6)) - 1.0, 0.0, 1.0))
+        # Real camera images have high low-frequency energy (lf_mean >> hf_mean)
+        # Synthetic checkerboards show high-frequency spikes.
+        # Compute ratio of mean high-frequency energy to low-frequency energy.
+        ratio = hf_mean / (lf_mean + 1e-6)
+        # Calibrate threshold offset (ratio typically < 0.25 for real camera photos)
+        anomaly = float(np.clip((ratio / 0.25) - 0.5, 0.0, 1.0))
 
         return anomaly, magnitude
 
@@ -568,7 +569,7 @@ async def analyze_image(buffer: bytes) -> ImageAnalysisResult:
         raise ValueError(f"Cannot decode image buffer: {exc}") from exc
 
     # ── Step 1: FFT Analysis ──────────────────────────────────────────────────
-    fft_score, _ = _fft_anomaly_score(pil_img)
+    fft_score, magnitude = _fft_anomaly_score(pil_img)
     if fft_score > 0.6:
         flags.append(ForensicFlag(
             label="Frequency Noise Anomaly",
@@ -585,7 +586,7 @@ async def analyze_image(buffer: bytes) -> ImageAnalysisResult:
 
     # ── Step 1b: DCT Analysis (Discrete Cosine Transform) ─────────────────────
     dct_score = _dct_anomaly_score(pil_img)
-    if dct_score > 0.5:
+    if dct_score > 0.85:
         flags.append(ForensicFlag(
             label="Discrete Cosine Transform Anomaly",
             severity="medium",
