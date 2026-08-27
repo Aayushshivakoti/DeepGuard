@@ -349,15 +349,24 @@ DeepGuard/
 
 ```mermaid
 graph TD
-    UI[User Dashboard Client<br/>Vite React] -->|REST API / WebSocket (JWT)| API[API Gateway / FastAPI Backend]
-    API -->|1. pHash Cache Check| Cache{pHash Deduplication<br/>Hamming Distance <= 2}
-    Cache -->|Match| InstantReturn[Instant Response / Cache Hit]
-    Cache -->|Miss| Preprocessing[2. Adversarial Preprocessor<br/>Blur + JPEG re-compression]
-    Preprocessing -->|3. Dual-Stream ML| ML[Dual-Stream ML Engine<br/>4-Channel PyTorch / FFT]
-    ML -->|4. AV Alignment| AV{Cross-Modal Alignment<br/>Consistency Checker}
-    AV -->|5. Phishing Scanner| Phish[URL Sandbox Check<br/>Payload Binary Detector]
-    Phish -->|Save Result| DB[(Primary Database<br/>SQLite / PostgreSQL)]
-    DB -->|Read / Display| UI
+    User([User / Admin Client]) -->|"REST API / WebSocket (JWT)"| API[API Gateway / Orchestrator]
+    
+    subgraph Execution Pipeline
+        API --> pHash{pHash Cache Check}
+        pHash -->|Cache Hit| FastReturn[Instant Result Return]
+        pHash -->|Cache Miss| Preproc[Adversarial Defense Layer<br/>Gaussian Blur + JPEG Rescale]
+        
+        Preproc --> Spatial[Spatial Engine & PyTorch Vision Model<br/>4-Channel RGB + FFT Anomaly Analysis]
+        Preproc --> CrossModal[Cross-Modal AV Alignment<br/>Lip-Sync & Voice Correlation]
+        Preproc --> Phishing[Phishing Engine & Payload Check<br/>Sandbox .exe/.apk/.pdf Scanner]
+    end
+
+    Spatial --> Aggregator[Risk Score Aggregator & Heuristics]
+    CrossModal --> Aggregator
+    Phishing --> Aggregator
+    
+    Aggregator --> DB[(Database / Scan History)]
+    Aggregator --> Dashboard[Admin Operations Control Center]
 ```
 
 ### Docker‑Compose (Updated)
