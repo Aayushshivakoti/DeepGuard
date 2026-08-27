@@ -236,6 +236,46 @@ async def _safe_browsing_lookup(url: str) -> bool:
         return False
 
 
+async def _check_url_payload_header(url: str) -> Tuple[bool, str]:
+    """
+    Perform a HEAD request to check if the target URL serves an executable/downloadable payload.
+    Returns (payload_detected, content_type).
+    """
+    try:
+        async with httpx.AsyncClient(timeout=3.0, follow_redirects=True) as client:
+            response = await client.head(url)
+            if response.status_code >= 400:
+                response = await client.get(url, headers={"Range": "bytes=0-1024"})
+            
+            headers = response.headers
+            content_type = headers.get("content-type", "").lower()
+            content_disp = headers.get("content-disposition", "").lower()
+            
+            payload_types = [
+                "application/octet-stream",
+                "application/x-msdownload",
+                "application/x-executable",
+                "application/x-sharedlib",
+                "application/x-dosexec",
+                "application/pdf",
+                "application/vnd.android.package-archive"
+            ]
+            
+            is_payload = any(t in content_type for t in payload_types)
+            
+            parsed_path = urlparse(url).path.lower()
+            if any(parsed_path.endswith(ext) for ext in [".exe", ".apk", ".pdf", ".bat", ".msi", ".scr"]):
+                is_payload = True
+                
+            if any(ext in content_disp for ext in [".exe", ".apk", ".pdf", ".bat", ".msi"]):
+                is_payload = True
+                
+            return is_payload, content_type
+    except Exception as exc:
+        log.warning("phishing_engine.payload_header_check_failed", error=str(exc))
+        return False, ""
+
+
 def _compute_url_score(
     typosquatting: float,
     is_ip: bool,
@@ -383,6 +423,20 @@ async def analyze_url(url: str) -> UrlAnalysisResult:
             description="URL is listed in Google Safe Browsing database as a known phishing or malware site.",
         ))
 
+    # ── Phishing Payload Sandbox Check ───────────────────────────────────────
+    payload_detected, content_type = await _check_url_payload_header(url)
+    sandbox_status = "CLEAN"
+    payload_penalty = 0.0
+    if payload_detected:
+        sandbox_status = "SUSPICIOUS_PAYLOAD_DETECTED"
+        payload_penalty = 30.0
+        flags.append(ForensicFlag(
+            label="Suspicious File Payload Download",
+            severity="critical",
+            description=f"The URL attempts to download a suspicious file payload (Content-Type: {content_type or 'unknown'}). "
+                        "Phishing sites often drop malware, installer binaries, or PDFs.",
+        ))
+
     # ── Score & Verdict ───────────────────────────────────────────────────────
     score = _compute_url_score(
         typosquatting=typo_score,
@@ -394,6 +448,8 @@ async def analyze_url(url: str) -> UrlAnalysisResult:
         gsb_flagged=gsb_flagged,
         has_redirect=has_redirect,
     )
+    score += payload_penalty
+    score = float(np.clip(score, 0.0, 100.0))
 
     if score >= 60:
         verdict = "PHISHING_DETECTED"
@@ -418,6 +474,8 @@ async def analyze_url(url: str) -> UrlAnalysisResult:
             "is_ip": is_ip,
             "is_http": is_http,
             "suspicious_tld": suspicious_tld,
+            "sandbox_status": sandbox_status,
+            "payload_content_type": content_type,
             "typosquatting_score": round(typo_score, 4),
             "keywords_found": keywords_found,
             "url_length": url_length,

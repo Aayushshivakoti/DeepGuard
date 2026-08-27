@@ -546,6 +546,25 @@ def _mock_gradcam_heatmap(pil_img: Image.Image, confidence: float) -> str:
     return base64.b64encode(buffer.tobytes()).decode("utf-8")
 
 
+def apply_adversarial_defense(image_bytes: bytes) -> bytes:
+    """
+    Apply mild Gaussian blurring and JPEG re-compression to mitigate
+    high-frequency adversarial noise perturbations.
+    """
+    try:
+        from PIL import ImageFilter
+        pil_img = Image.open(io.BytesIO(image_bytes))
+        # Mild Gaussian blur (radius=0.5)
+        blurred = pil_img.filter(ImageFilter.GaussianBlur(radius=0.5))
+        # JPEG re-compression at quality=85
+        out_buf = io.BytesIO()
+        blurred.convert("RGB").save(out_buf, format="JPEG", quality=85)
+        return out_buf.getvalue()
+    except Exception as exc:
+        log.warning("spatial_engine.adversarial_defense_failed", error=str(exc))
+        return image_bytes
+
+
 # ─── Main Analysis Function ───────────────────────────────────────────────────
 
 async def analyze_image(buffer: bytes) -> ImageAnalysisResult:
@@ -558,6 +577,9 @@ async def analyze_image(buffer: bytes) -> ImageAnalysisResult:
     Returns:
         ImageAnalysisResult with verdict, confidence, flags, and heatmap
     """
+    # Apply adversarial defense preprocessing
+    buffer = apply_adversarial_defense(buffer)
+
     t_start = time.perf_counter()
     flags: List[ForensicFlag] = []
 

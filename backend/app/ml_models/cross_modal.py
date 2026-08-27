@@ -59,6 +59,8 @@ class CrossModalConsistencyChecker:
             return {
                 "consistency_score": round(consistency_score, 2),
                 "is_suspicious": is_suspicious,
+                "cross_modal_mismatch_score": float(round(100.0 - consistency_score, 2)),
+                "is_audio_visual_aligned": not is_suspicious,
                 "visual_features": {
                     "motion_energy": round(visual_features.get("motion_energy", 0), 4),
                     "facial_activity": round(visual_features.get("facial_activity", 0), 4),
@@ -77,6 +79,8 @@ class CrossModalConsistencyChecker:
             return {
                 "consistency_score": 50.0,
                 "is_suspicious": False,
+                "cross_modal_mismatch_score": 50.0,
+                "is_audio_visual_aligned": True,
                 "visual_features": {},
                 "audio_features": {},
                 "correlation": 0.5,

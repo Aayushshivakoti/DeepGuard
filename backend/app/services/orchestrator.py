@@ -87,6 +87,22 @@ async def dispatch_file_scan(
 
     # ── Engine Dispatch ───────────────────────────────────────────────────────
     if engine_type == "image":
+        from app.services.reverse_image_service import compute_phash, lookup_cached_response, cache_response
+        phash = await anyio.to_thread.run_sync(compute_phash, buffer)
+        
+        cached_res_dict = lookup_cached_response(phash)
+        if cached_res_dict is not None:
+            # Return cached response instantly (updating ID and timestamp for uniqueness)
+            cached_res = VerificationResponse(**cached_res_dict)
+            cached_res.id = str(uuid.uuid4())
+            cached_res.timestamp = datetime.now(timezone.utc)
+            cached_res.flags.append(ForensicFlag(
+                label="Cache Deduplication Match",
+                severity="low",
+                description="This media matches a previously analyzed file in our perceptual hash cache.",
+            ))
+            return cached_res
+
         # 1. Spatial engine analyze
         result = await analyze_image(buffer)
         
@@ -100,7 +116,7 @@ async def dispatch_file_scan(
         if not heatmap_b64:
             heatmap_b64 = result.heatmap_b64
             heatmap_available = result.heatmap_available
-
+ 
         # 3. Run GAN fingerprint analysis
         gan_result = await anyio.to_thread.run_sync(get_gan_fingerprinter().analyze, buffer)
         if gan_result.get("is_synthetic"):
@@ -109,7 +125,7 @@ async def dispatch_file_scan(
                 severity="high",
                 description=f"Spectral signatures match known GAN/Diffusion generator: {gan_result['probable_model']}.",
             ))
-
+ 
         if metadata_result and metadata_result.flags:
             result.flags.extend(metadata_result.flags)
             
@@ -153,8 +169,8 @@ async def dispatch_file_scan(
             verdict = "SUSPICIOUS"
         else:
             verdict = "AUTHENTIC"
-
-        return _build_response(
+ 
+        response = _build_response(
             verdict=verdict,
             confidence=final_score,
             media_type=media_type_label,
@@ -174,6 +190,10 @@ async def dispatch_file_scan(
             frequency_artifact_score=None,
             overall_verdict=verdict,
         )
+        
+        # Cache the response dict for deduplication
+        cache_response(phash, response.model_dump() if hasattr(response, 'model_dump') else response.dict())
+        return response
 
     elif engine_type == "audio":
         audio_ext = ext or filename.rsplit(".", 1)[-1] if "." in filename else "wav"
