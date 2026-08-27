@@ -100,7 +100,7 @@ sequenceDiagram
 - **Frequency Extraction** → **2D FFT Magnitude Spectra** & **ELA variance maps** to expose periodic anomalies.
 - **Logits Calibration** → **Platt Scaling & Dynamic Decision Boundaries** (`<40%` Real, `40-85%` Uncertain, `>85%` AI).
 
-## 16. Security & Authentication (New)
+## 7. Security & Authentication (New)
 
 ### WebSocket JWT Protection
 - All real‑time channels (`/ws/scans/{job_id}` and `/ws/admin/alerts`) now require a **signed JWT** in the `Authorization: Bearer <token>` header.
@@ -117,7 +117,7 @@ sequenceDiagram
 
 > **Note:** The `RateLimitMiddleware` now falls back to an in‑memory store if the Redis connection fails, guaranteeing uninterrupted operation.
 
-## 7. System State Transition Diagram
+## 8. System State Transition Diagram
 ```mermaid
 stateDiagram-v2
     [*] --> IDLE
@@ -132,7 +132,7 @@ stateDiagram-v2
     FAILED --> [*]
 ```
 
-## 17. Explainable AI – Grad‑CAM Heat‑maps (New)
+## 9. Explainable AI – Grad‑CAM Heat‑maps (New)
 
 The dual‑stream vision model now outputs a **Grad‑CAM heat‑map** (`heatmap_b64`) that visualises the regions most responsible for the AI‑generated verdict.
 
@@ -147,7 +147,7 @@ The dual‑stream vision model now outputs a **Grad‑CAM heat‑map** (`heatmap
 
 > Users can now download a certified forensic report that contains both the numerical verdict and the visual explanation.
 
-## 8. Prerequisites & Environment Requirements
+## 10. Prerequisites & Environment Requirements
 | Component | Minimum Version |
 |-----------|-----------------|
 | OS        | Windows 10+, macOS 12+, Linux |
@@ -156,7 +156,7 @@ The dual‑stream vision model now outputs a **Grad‑CAM heat‑map** (`heatmap
 | Docker & Docker-Compose | latest (optional) |
 | Git       | any recent release |
 
-## 18. PDF Report Export (New)
+## 11. PDF Report Export (New)
 
 A new UI button **“Export Report”** appears on the scan results page.
 
@@ -166,7 +166,7 @@ A new UI button **“Export Report”** appears on the scan results page.
 
 > The PDF is cryptographically hash‑signed on the backend (see `backend/app/services/report_service.py`) to guarantee integrity.
 
-## 9. Quick-Start Guide (Local Setup)
+## 12. Quick-Start Guide (Local Setup)
 
 ### One-Command Launch
 ```cmd
@@ -212,7 +212,7 @@ npm install
 npm run dev
 ```
 
-## 19. Async Non‑Blocking Uploads (New)
+## 13. Async Non‑Blocking Uploads (New)
 
 The previous `scan.py` endpoint synchronously read the whole multipart payload into memory.  
 It now streams the upload directly to Redis using **async generators**:
@@ -232,13 +232,13 @@ curl -X POST http://localhost:8000/api/v1/scan/upload \
 ```
 The client receives a `job_id` instantly and can open the WebSocket for real‑time progress.
 
-## 10. Docker Deployment
+## 14. Docker Deployment
 ```bash
 docker-compose up --build
 ```
 **Active services**: API, Celery worker, Redis broker, PostgreSQL database, and Nginx-served frontend (port 80).
 
-## 20. Celery Worker Tuning (New)
+## 15. Celery Worker Tuning (New)
 
 Key performance knobs added to `backend/app/core/celery_app.py`:
 
@@ -251,7 +251,7 @@ Key performance knobs added to `backend/app/core/celery_app.py`:
 
 These settings are now reflected in `docker-compose.yml` under the `celery_worker` service (`command: celery -A app.core.celery_app worker -l info -c 2`).
 
-## 11. 🔑 Demo Access & Credentials
+## 16. 🔑 Demo Access & Credentials
 
 | Role | Username / Email | Password | Access Level |
 | :--- | :--- | :--- | :--- |
@@ -261,7 +261,7 @@ These settings are now reflected in `docker-compose.yml` under the `celery_worke
 - **Dashboard Interface**: `http://localhost:5173`
 - **API Documentation**: `http://localhost:8000/docs`
 
-## 21. Backend Dependencies (Updated)
+## 17. Backend Dependencies (Updated)
 
 The `requirements.txt` now includes:
 
@@ -279,7 +279,7 @@ timm           # Access to pretrained vision models (e.g., EfficientNet‑B4)
 ```
 > Run `pip install -r requirements.txt` after pulling the latest changes.
 
-## 12. Environment Configuration
+## 18. Environment Configuration
 Create a `.env` file at the repository root for the backend and a `.env.development` (or `.env.production`) inside `frontend/`.
 ### Backend (`.env`)
 ```dotenv
@@ -299,7 +299,7 @@ VITE_WS_URL=ws://localhost:8000/ws
 ```
 Adjust values for production as needed.
 
-## 22. Frontend Dependencies (Updated)
+## 19. Frontend Dependencies (Updated)
 
 Add the following libraries to `frontend/package.json`:
 
@@ -314,7 +314,7 @@ Add the following libraries to `frontend/package.json`:
 ```
 Run `npm install` (or `yarn`) to make the **Export Report** button functional.
 
-## 13. Project Directory Structure
+## 20. Project Directory Structure
 ```
 DeepGuard/
 ├─ backend/
@@ -345,7 +345,7 @@ DeepGuard/
 └─ pyproject.toml / setup.cfg (if any)
 ```
 
-## 23. Updated Architecture Flow (New Diagram)
+## 21. Updated Architecture Flow (New Diagram)
 
 ```mermaid
 graph TD
@@ -388,7 +388,7 @@ docker-compose up --build
 ```
 The container now starts Redis with password authentication and the Celery worker with the tuned concurrency settings.
 
-## 24. Enterprise Security & Infrastructure Additions
+## 22. Enterprise Security & Infrastructure Additions
 
 DeepGuard has been upgraded with four critical enterprise-grade security and detection layers:
 
@@ -414,7 +414,7 @@ DeepGuard has been upgraded with four critical enterprise-grade security and det
 
 ---
 
-## 25. Verification & Testing
+## 23. Verification & Testing
 
 DeepGuard maintains a strict verification process. All newly added features and core modules are fully tested and validated.
 
@@ -434,11 +434,11 @@ All **42 unit and integration tests** pass cleanly with zero failures:
 ================= 42 passed, 15 warnings in 81.88s (0:01:21) ==================
 ```
 
-## 14. Contributing
+## 24. Contributing
 1. Fork the repository and create a feature branch.
 2. Follow the coding style enforced by `ruff` and `black` (`pre-commit install`).
 3. Add unit and integration tests for new functionality.
 4. Open a Pull Request targeting `main`. CI will run linting, tests, and a Docker build verification.
 
-## 15. License
+## 25. License
 This project is licensed under the **MIT License**. See the `LICENSE` file for full terms.
