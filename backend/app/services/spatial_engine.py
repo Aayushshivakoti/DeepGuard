@@ -229,6 +229,7 @@ def load_spatial_model():
             log.info("spatial_engine.weights_loaded", path=weights_path)
         else:
             log.warning("spatial_engine.weights_missing", path=weights_path, fallback="mock mode")
+            _model = None
             return None
 
         backbone.to(_device)
