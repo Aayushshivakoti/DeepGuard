@@ -26,6 +26,7 @@ VerdictType = Literal[
     "SUSPICIOUS",
     "DEEPFAKE_DETECTED",
     "PHISHING_DETECTED",
+    "DETECTION_ERROR",
 ]
 
 MediaType = Literal["image", "audio", "video", "url", "pdf"]

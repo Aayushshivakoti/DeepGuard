@@ -49,9 +49,40 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:  # noqa: ARG001
     if settings.DEBUG:
         log.info("deepguard.db.tables_check_skipped")
         
-    # Seed default Admin and Standard User credentials if they do not exist
+    # Seed default Admin and Standard User credentials with retry backoff
     from app.db.init_db import init_db
-    await init_db()
+    import asyncio
+    
+    max_retries = 5
+    db_initialized = False
+    for attempt in range(max_retries):
+        try:
+            await init_db()
+            log.info("deepguard.db.init_success")
+            db_initialized = True
+            break
+        except Exception as exc:
+            log.warning("deepguard.db.init_failed", attempt=attempt+1, error=str(exc))
+            if attempt == max_retries - 1:
+                log.error("deepguard.db.init_fatal", error=str(exc))
+            await asyncio.sleep(2 ** attempt)
+
+    # Trigger background model preloading if DB initialized successfully
+    if db_initialized:
+        async def preload_models():
+            try:
+                log.info("deepguard.models.preloading_start")
+                from app.ml_models import get_vision_model
+                from app.services.audio_engine import _get_audio_models
+                
+                loop = asyncio.get_event_loop()
+                await loop.run_in_executor(None, get_vision_model)
+                await loop.run_in_executor(None, _get_audio_models)
+                log.info("deepguard.models.preloading_complete")
+            except Exception as exc:
+                log.warning("deepguard.models.preloading_failed", error=str(exc))
+
+        asyncio.create_task(preload_models())
 
     yield  # ← server is running
 

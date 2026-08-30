@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     APP_ENV: str = "development"
     DEBUG: bool = True
     RATE_LIMIT_ENABLED: bool = True
+    APPLY_ADVERSARIAL_DEFENSE: bool = False
 
     # ── Security ───────────────────────────────────────────────────────────────
     SECRET_KEY: str = "insecure-dev-secret-change-in-production"
@@ -76,6 +77,8 @@ class Settings(BaseSettings):
     # ── Third-Party APIs ──────────────────────────────────────────────────────
     VIRUSTOTAL_API_KEY: str = ""
     GOOGLE_SAFE_BROWSING_KEY: str = ""
+    EXTERNAL_API_URL: str = ""
+    EXTERNAL_API_KEY: str = ""
 
     # ── OAuth & WebAuthn SSO ──────────────────────────────────────────────────
     GOOGLE_CLIENT_ID: str = ""

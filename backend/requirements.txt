@@ -28,14 +28,16 @@ pydantic-settings==2.7.0
 email-validator==2.2.0
 
 # ─── AI / ML ──────────────────────────────────────────────────────────────────
-torch==2.5.1
-torchvision==0.20.1
-numpy==2.0.2
+# torch and torchvision are optional; fallback to mock models on Windows
+# torch==2.3.0
+# torchvision==0.18.0
+numpy>=2.3.4
+albumentations==1.4.0
 
 # ─── Computer Vision ──────────────────────────────────────────────────────────
 opencv-python-headless==4.10.0.84
-Pillow==11.0.0
-scipy==1.14.1
+Pillow>=12.0.0
+scipy==1.16.1
 
 # ─── Audio Analysis ───────────────────────────────────────────────────────────
 librosa==0.10.2.post1
@@ -52,7 +54,7 @@ pdfminer.six==20231228
 
 # ─── URL / Phishing Analysis ──────────────────────────────────────────────────
 httpx==0.28.1
-Levenshtein==0.26.1
+Levenshtein>=0.27.0
 tldextract==5.1.3
 validators==0.34.0
 dnspython==2.7.0
@@ -61,7 +63,7 @@ dnspython==2.7.0
 structlog==24.4.0
 python-dotenv==1.0.1
 tenacity==9.0.0
-orjson==3.10.12
+# orjson removed due to missing Rust toolchain; using default JSONResponse
 boto3==1.34.162
 
 # ─── Testing ──────────────────────────────────────────────────────────────────

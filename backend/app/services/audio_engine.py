@@ -29,15 +29,22 @@ from app.schemas.scan import ForensicFlag
 
 log = structlog.get_logger(__name__)
 
-# ─── Optional imports ─────────────────────────────────────────────────────────
+import importlib.util
+LIBROSA_AVAILABLE = False
 try:
-    import librosa
-    import librosa.feature
-    import soundfile as sf
-    LIBROSA_AVAILABLE = True
-except (ImportError, AttributeError, Exception) as exc:
-    LIBROSA_AVAILABLE = False
-    log.warning("audio_engine.librosa_unavailable", error=str(exc))
+    if importlib.util.find_spec("librosa") is not None and importlib.util.find_spec("soundfile") is not None:
+        LIBROSA_AVAILABLE = True
+except Exception:
+    pass
+
+librosa = None
+
+def _import_librosa():
+    global librosa
+    if librosa is None:
+        import librosa as lr
+        import librosa.feature
+        librosa = lr
 
 try:
     import torch
@@ -197,6 +204,7 @@ def _load_audio(buffer: bytes, ext: str) -> tuple[np.ndarray, int]:
         tmp_path = tmp.name
 
     try:
+        _import_librosa()
         y, sr = librosa.load(tmp_path, sr=None, mono=True, duration=60.0)
         return y, sr
     finally:
@@ -221,6 +229,7 @@ def _log_mel_spectrogram(y: np.ndarray, sr: int) -> tuple[np.ndarray, dict]:
     hop_length = 512
     n_mels = 128
 
+    _import_librosa()
     mel_spec = librosa.feature.melspectrogram(
         y=y, sr=sr, n_fft=n_fft, hop_length=hop_length, n_mels=n_mels,
         fmin=20, fmax=sr // 2,
@@ -248,6 +257,7 @@ def _extract_lfcc(y: np.ndarray, sr: int) -> np.ndarray:
     hop_length = 512
     n_lfcc = 40
     
+    _import_librosa()
     stft = np.abs(librosa.stft(y, n_fft=n_fft, hop_length=hop_length))
     frequencies = np.linspace(0, sr / 2, n_fft // 2 + 1)
     filter_banks = np.zeros((n_lfcc, n_fft // 2 + 1))
@@ -276,6 +286,7 @@ def _spectral_flatness_score(y: np.ndarray) -> float:
     Neural vocoders: overprocessed audio shows anomalous flatness > 0.15
     (noise-like energy distribution from vocoder quantisation).
     """
+    _import_librosa()
     flatness = librosa.feature.spectral_flatness(y=y)
     return float(np.mean(flatness))
 
@@ -287,6 +298,7 @@ def _zero_crossing_rate_score(y: np.ndarray) -> float:
     TTS / cloned voices: unnaturally regular ZCR due to synthesis regularity.
     Natural speech: irregular ZCR spikes at consonant boundaries.
     """
+    _import_librosa()
     zcr = librosa.feature.zero_crossing_rate(y)
     return float(np.mean(zcr))
 
@@ -298,6 +310,7 @@ def _mfcc_delta_anomaly(y: np.ndarray, sr: int) -> float:
     Cloned voices produced by diffusion vocoders exhibit over-smoothed MFCC
     trajectories. We measure the variance of MFCC deltas: low variance = synthetic.
     """
+    _import_librosa()
     mfcc = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=13)
     mfcc_delta = librosa.feature.delta(mfcc)
     # Normalised variance: cloned audio has very low variance
@@ -314,6 +327,7 @@ def _phase_anomaly_score(y: np.ndarray, sr: int) -> float:
     GAN-based vocoders (HiFi-GAN, MelGAN) produce periodic phase discontinuities
     in the STFT phase spectrum at frame boundaries. We measure phase jump regularity.
     """
+    _import_librosa()
     stft = librosa.stft(y, n_fft=1024, hop_length=256)
     phase = np.angle(stft)
     # Phase differences across time frames

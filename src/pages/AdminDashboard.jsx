@@ -16,7 +16,7 @@ import RbacManager from '../components/admin/RbacManager';
 import SiemLoggerView from '../components/admin/SiemLoggerView';
 import DatasetExporterModal from '../components/admin/DatasetExporterModal';
 import SoarPlaybooks from '../components/admin/SoarPlaybooks';
-import Telemetry from '../components/admin/Telemetry';
+const Telemetry = React.lazy(() => import('../components/admin/Telemetry'));
 import SiemExporterSettings from '../components/admin/SiemExporterSettings';
 import UserQuotas from '../components/admin/UserQuotas';
 import CaseDossier from '../components/admin/CaseDossier';
@@ -259,7 +259,11 @@ export default function AdminDashboard() {
                 </>
               )}
 
-              {analyticsSubView === 'telemetry' && <Telemetry />}
+              {analyticsSubView === 'telemetry' && (
+                <React.Suspense fallback={<div className="text-slate-400 text-xs p-6 bg-slate-900/20 border border-slate-800 rounded-2xl">Loading Telemetry...</div>}>
+                  <Telemetry />
+                </React.Suspense>
+              )}
               {analyticsSubView === 'threats' && <ThreatMap />}
             </div>
           )}

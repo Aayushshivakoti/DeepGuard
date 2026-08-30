@@ -1,0 +1,57 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: deepguard-backend
+  namespace: default
+  labels:
+    app: deepguard-backend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: deepguard-backend
+  template:
+    metadata:
+      labels:
+        app: deepguard-backend
+    spec:
+      containers:
+        - name: backend
+          image: deepguard-backend:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8000
+          envFrom:
+            - secretRef:
+                name: deepguard-secrets
+          env:
+            - name: USE_MOCK_MODELS
+              value: "false"
+            - name: MODEL_DEVICE
+              value: "cpu"
+          resources:
+            requests:
+              memory: "1Gi"
+              cpu: "500m"
+            limits:
+              memory: "2Gi"
+              cpu: "2"
+          volumeMounts:
+            - name: model-volume
+              mountPath: /app/weights
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 20
+            periodSeconds: 20
+      volumes:
+        - name: model-volume
+          persistentVolumeClaim:
+            claimName: deepguard-model-pvc

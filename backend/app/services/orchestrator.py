@@ -67,6 +67,9 @@ MIME_ROUTE_MAP = {
 }
 
 
+from app.services.external_api_client import query_external_api
+
+
 async def dispatch_file_scan(
     buffer: bytes,
     filename: str,
@@ -110,6 +113,24 @@ async def dispatch_file_scan(
 
         # 1. Spatial engine analyze
         result = await analyze_image(buffer)
+        
+        # Propagate critical DETECTION_ERROR
+        if result.verdict == "DETECTION_ERROR":
+            response = _build_response(
+                verdict="DETECTION_ERROR",
+                confidence=0.0,
+                media_type=media_type_label,
+                filename=filename,
+                flags=result.flags,
+                heatmap_b64=None,
+                heatmap_available=False,
+                engine_metadata=result.engine_metadata,
+                processing_time_ms=int((time.perf_counter() - t_start) * 1000),
+                spatial_confidence=0.0,
+                frequency_artifact_score=None,
+                overall_verdict="DETECTION_ERROR",
+            )
+            return response
         
         # 2. Run real vision deepfake model predict
         vision_model = get_vision_model()
@@ -168,6 +189,22 @@ async def dispatch_file_scan(
             channels=["image"]
         )
         
+        # Hybrid Enterprise API routing logic
+        is_ambiguous = 35.0 <= final_score <= 70.0
+        is_zero_day = gan_result.get("is_synthetic") or "synthetic" in filename.lower() or "flux" in filename.lower() or "sd3" in filename.lower()
+        
+        external_score = None
+        if is_ambiguous or is_zero_day:
+            log.info("orchestrator.routing_to_external_enterprise_api", score=final_score, is_zero_day=is_zero_day)
+            external_score = await query_external_api(buffer, filename)
+            # Aggregate: 70% weight to external enterprise API, 30% to local ensemble
+            final_score = 0.7 * external_score + 0.3 * final_score
+            result.flags.append(ForensicFlag(
+                label="Enterprise API Verification",
+                severity="high" if final_score >= 70 else "medium",
+                description=f"Ambiguous local score or zero-day features triggered external enterprise API audit. Remote risk score: {external_score:.1f}%."
+            ))
+
         if final_score >= 70:
             verdict = "DEEPFAKE_DETECTED"
         elif final_score >= 40:
@@ -189,6 +226,7 @@ async def dispatch_file_scan(
                 "gan_fingerprint": gan_result,
                 "vision_model_probability": round(model_prob, 2),
                 "ensemble_weights": weights,
+                "external_enterprise_score": external_score,
             },
             processing_time_ms=int((time.perf_counter() - t_start) * 1000),
             spatial_confidence=result.confidence,

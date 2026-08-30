@@ -51,8 +51,35 @@ class TestSpatialEngine:
         from app.services.spatial_engine import _heuristic_score
         for fft in [0.0, 0.3, 0.7, 1.0]:
             for faces in [0, 1, 2]:
-                score = _heuristic_score(fft, faces)
+                score = _heuristic_score(fft, faces, copy_move_score=0.2, dire_score=0.1)
                 assert 0.0 <= score <= 100.0
+
+    def test_sift_copy_move_detection(self, sample_jpeg_bytes: bytes):
+        from app.services.spatial_engine import _detect_copy_move
+        from PIL import Image
+        img = Image.open(io.BytesIO(sample_jpeg_bytes))
+        score, count = _detect_copy_move(img)
+        assert 0.0 <= score <= 1.0
+        assert isinstance(count, int)
+
+    def test_dire_score_calculation(self, sample_jpeg_bytes: bytes):
+        from app.services.spatial_engine import _calculate_dire_score
+        from PIL import Image
+        img = Image.open(io.BytesIO(sample_jpeg_bytes))
+        score = _calculate_dire_score(img)
+        assert 0.0 <= score <= 1.0
+
+    def test_apply_adversarial_defense_default_bypass(self, sample_jpeg_bytes: bytes):
+        from app.services.spatial_engine import apply_adversarial_defense
+        out = apply_adversarial_defense(sample_jpeg_bytes, force=False)
+        assert len(out) == len(sample_jpeg_bytes) # Should be completely unmodified
+
+    async def test_enterprise_routing_flux_zero_day(self, sample_jpeg_bytes: bytes):
+        from app.services.orchestrator import dispatch_file_scan
+        res = await dispatch_file_scan(sample_jpeg_bytes, filename="flux_synthetic.jpg", mime_type="image/jpeg")
+        assert res.verdict == "DEEPFAKE_DETECTED"
+        assert any("Enterprise API Verification" in f.label for f in res.flags)
+
 
 
 class TestAudioEngine:

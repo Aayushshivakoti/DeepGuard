@@ -37,8 +37,6 @@ log = structlog.get_logger(__name__)
 try:
     import torch
     import torch.nn as nn
-    import torchvision.models as tv_models
-    import torchvision.transforms as T
     TORCH_AVAILABLE = True
 except ImportError:  # pragma: no cover
     TORCH_AVAILABLE = False
@@ -195,6 +193,8 @@ def load_spatial_model():
         return None
 
     try:
+        import torchvision.models as tv_models
+        import torchvision.transforms as T
         _device = _get_device()
 
         # EfficientNet-B4 backbone
@@ -334,6 +334,67 @@ def _dct_anomaly_score(pil_img: Image.Image) -> float:
     except Exception as exc:
         log.warning("dct_analysis.failed", error=str(exc))
         return 0.0
+
+
+def _detect_copy_move(pil_img: Image.Image) -> Tuple[float, int]:
+    """
+    Detect copy-move forgery within the image using ORB descriptors.
+    Matches keypoints with high spatial distance but high descriptor similarity.
+    Returns (copy_move_score 0-1, match_count).
+    """
+    try:
+        gray = np.array(pil_img.convert("L"))
+        orb = cv2.ORB_create(nfeatures=1000)
+        kp, des = orb.detectAndCompute(gray, None)
+        if des is None or len(des) < 10:
+            return 0.0, 0
+        
+        from cv2 import BFMatcher
+        bf = BFMatcher(cv2.NORM_HAMMING, crossCheck=False)
+        matches = bf.knnMatch(des, des, k=3)
+        
+        suspicious_matches = 0
+        for m in matches:
+            if len(m) < 3:
+                continue
+            for match in m[1:3]:
+                if match.distance < 45.0:
+                    pt1 = kp[match.queryIdx].pt
+                    pt2 = kp[match.trainIdx].pt
+                    dist = np.sqrt((pt1[0] - pt2[0])**2 + (pt1[1] - pt2[1])**2)
+                    if dist > 50.0:
+                        suspicious_matches += 1
+                        
+        score = float(np.clip(suspicious_matches / 15.0, 0.0, 1.0))
+        return score, suspicious_matches
+    except Exception as exc:
+        log.warning("copy_move_detection.failed", error=str(exc))
+        return 0.0, 0
+
+
+def _calculate_dire_score(pil_img: Image.Image) -> float:
+    """
+    Diffusion Reconstruction Error (DIRE) simulator.
+    Measures structural differences under mild diffusion-style noise reconstruction.
+    """
+    try:
+        gray = np.array(pil_img.convert("L"), dtype=np.float32) / 255.0
+        noise = np.random.normal(0, 0.05, gray.shape).astype(np.float32)
+        noisy = np.clip(gray + noise, 0.0, 1.0)
+        
+        denoised = cv2.bilateralFilter(noisy * 255.0, d=5, sigmaColor=50, sigmaSpace=50) / 255.0
+        recon_error = float(np.mean(np.abs(gray - denoised)))
+        
+        if recon_error < 0.035:
+            score = float(np.clip((0.035 - recon_error) / 0.02, 0.0, 1.0))
+        else:
+            score = 0.0
+        return score
+    except Exception as exc:
+        log.warning("dire_calculation.failed", error=str(exc))
+        return 0.0
+
+
 
 
 def _run_mtcnn_alignment(face_box: Tuple[int, int, int, int]) -> dict:
@@ -548,11 +609,14 @@ def _mock_gradcam_heatmap(pil_img: Image.Image, confidence: float) -> str:
     return base64.b64encode(buffer.tobytes()).decode("utf-8")
 
 
-def apply_adversarial_defense(image_bytes: bytes) -> bytes:
+def apply_adversarial_defense(image_bytes: bytes, force: bool = False) -> bytes:
     """
     Apply mild Gaussian blurring and JPEG re-compression to mitigate
     high-frequency adversarial noise perturbations.
+    Only active if force=True (optional/isolated threat profile defense).
     """
+    if not force:
+        return image_bytes
     try:
         from PIL import ImageFilter
         pil_img = Image.open(io.BytesIO(image_bytes))
@@ -565,6 +629,38 @@ def apply_adversarial_defense(image_bytes: bytes) -> bytes:
     except Exception as exc:
         log.warning("spatial_engine.adversarial_defense_failed", error=str(exc))
         return image_bytes
+
+
+def _create_error_result(fft_score, dct_score, face_count, mtcnn_landmarks, mediapipe_facemesh, pil_img, t_start, error_msg):
+    processing_ms = int((time.perf_counter() - t_start) * 1000)
+    flags = [ForensicFlag(
+        label="Detection Error",
+        severity="high",
+        description=error_msg
+    )]
+    return ImageAnalysisResult(
+        confidence=0.0,
+        verdict="DETECTION_ERROR",
+        flags=flags,
+        heatmap_b64=None,
+        heatmap_available=False,
+        fft_anomaly_score=round(fft_score, 4),
+        dct_anomaly_score=round(dct_score, 4),
+        face_count=face_count,
+        mtcnn_landmarks=mtcnn_landmarks,
+        mediapipe_facemesh=mediapipe_facemesh,
+        engine_metadata={
+            "fft_anomaly_score": fft_score,
+            "dct_anomaly_score": dct_score,
+            "face_count": face_count,
+            "mtcnn_landmarks_count": len(mtcnn_landmarks),
+            "mediapipe_facemesh_count": len(mediapipe_facemesh),
+            "model_mode": "error",
+            "image_size": list(pil_img.size),
+            "error": error_msg,
+        },
+        processing_time_ms=processing_ms,
+    )
 
 
 # ─── Main Analysis Function ───────────────────────────────────────────────────
@@ -580,7 +676,7 @@ async def analyze_image(buffer: bytes) -> ImageAnalysisResult:
         ImageAnalysisResult with verdict, confidence, flags, and heatmap
     """
     # Apply adversarial defense preprocessing
-    buffer = apply_adversarial_defense(buffer)
+    buffer = apply_adversarial_defense(buffer, force=settings.APPLY_ADVERSARIAL_DEFENSE)
 
     t_start = time.perf_counter()
     flags: List[ForensicFlag] = []
@@ -620,6 +716,24 @@ async def analyze_image(buffer: bytes) -> ImageAnalysisResult:
             severity="medium",
             description=f"Periodic JPEG grid/AC-energy mismatch detected by 2D DCT block mapping (score: {dct_score:.2f}). "
                         "Indicates potential image splicing or double-compression artifacts.",
+        ))
+
+    # ── Step 1c: Copy-Move Splicing Detection ─────────────────────────────────
+    copy_move_score, matches_count = _detect_copy_move(pil_img)
+    if copy_move_score > 0.4:
+        flags.append(ForensicFlag(
+            label="Copy-Move Splicing Detected",
+            severity="high" if copy_move_score > 0.75 else "medium",
+            description=f"Regional keypoint descriptor match detected copy-paste forgery (matches: {matches_count}).",
+        ))
+
+    # ── Step 1d: Diffusion Reconstruction Error (DIRE) ────────────────────────
+    dire_score = _calculate_dire_score(pil_img)
+    if dire_score > 0.6:
+        flags.append(ForensicFlag(
+            label="Diffusion Reconstruction Error Anomaly",
+            severity="high",
+            description=f"Structural reconstruction pattern matches zero-day diffusion signatures (DIRE score: {dire_score:.2f}).",
         ))
 
     # ── Step 2: Face Detection & Landmark Extraction ──────────────────────────
@@ -666,8 +780,10 @@ async def analyze_image(buffer: bytes) -> ImageAnalysisResult:
             probs = torch.softmax(torch.from_numpy(logits), dim=1)
             deepfake_prob = float(probs[0, 1].item()) * 100.0
         except Exception as exc:
-            log.warning("onnx.inference_failed", error=str(exc))
-            deepfake_prob = _heuristic_score(fft_score, face_count, dct_score=dct_score, pil_img=pil_img)
+            log.error("onnx.inference_failed_critical", error=str(exc))
+            if not settings.USE_MOCK_MODELS:
+                return _create_error_result(fft_score, dct_score, face_count, mtcnn_landmarks, mediapipe_facemesh, pil_img, t_start, f"ONNX inference failed: {exc}")
+            deepfake_prob = _heuristic_score(fft_score, face_count, dct_score=dct_score, pil_img=pil_img, copy_move_score=copy_move_score, dire_score=dire_score)
         # Use PyTorch model for Grad-CAM if available, else mock
         model = load_spatial_model()
         if model is not None and TORCH_AVAILABLE:
@@ -687,14 +803,22 @@ async def analyze_image(buffer: bytes) -> ImageAnalysisResult:
                     deepfake_prob = float(probs[0, 1].item()) * 100.0
                 heatmap_b64 = _generate_gradcam_heatmap(model, pil_img, _transform, _device, faces, magnitude=magnitude)
             except Exception as exc:
-                log.warning("spatial_engine.inference_failed", error=str(exc))
-                deepfake_prob = _heuristic_score(fft_score, face_count, dct_score=dct_score, pil_img=pil_img)
+                log.error("spatial_engine.inference_failed_critical", error=str(exc))
+                if not settings.USE_MOCK_MODELS:
+                    return _create_error_result(fft_score, dct_score, face_count, mtcnn_landmarks, mediapipe_facemesh, pil_img, t_start, f"PyTorch inference failed: {exc}")
+                deepfake_prob = _heuristic_score(fft_score, face_count, dct_score=dct_score, pil_img=pil_img, copy_move_score=copy_move_score, dire_score=dire_score)
                 heatmap_b64 = _mock_gradcam_heatmap(pil_img, deepfake_prob) if face_count > 0 or deepfake_prob > 40 else None
         else:
-            deepfake_prob = _heuristic_score(fft_score, face_count, dct_score=dct_score, pil_img=pil_img)
+            if not settings.USE_MOCK_MODELS:
+                log.error("spatial_engine.weights_missing_critical")
+                return _create_error_result(fft_score, dct_score, face_count, mtcnn_landmarks, mediapipe_facemesh, pil_img, t_start, "Model weights missing or initialization failed")
+            deepfake_prob = _heuristic_score(fft_score, face_count, dct_score=dct_score, pil_img=pil_img, copy_move_score=copy_move_score, dire_score=dire_score)
             heatmap_b64 = _mock_gradcam_heatmap(pil_img, deepfake_prob) if face_count > 0 or deepfake_prob > 40 else None
     else:
-        deepfake_prob = _heuristic_score(fft_score, face_count, dct_score=dct_score, pil_img=pil_img)
+        if not settings.USE_MOCK_MODELS:
+            log.error("spatial_engine.torch_unavailable_critical")
+            return _create_error_result(fft_score, dct_score, face_count, mtcnn_landmarks, mediapipe_facemesh, pil_img, t_start, "PyTorch runtime is not available")
+        deepfake_prob = _heuristic_score(fft_score, face_count, dct_score=dct_score, pil_img=pil_img, copy_move_score=copy_move_score, dire_score=dire_score)
         heatmap_b64 = _mock_gradcam_heatmap(pil_img, deepfake_prob) if face_count > 0 or deepfake_prob > 40 else None
 
     # ── Step 4: Flag Generation ───────────────────────────────────────────────
@@ -763,16 +887,23 @@ async def analyze_image(buffer: bytes) -> ImageAnalysisResult:
     )
 
 
-def _heuristic_score(fft_score: float, face_count: int, dct_score: float = 0.0, pil_img: Optional[Image.Image] = None) -> float:
+def _heuristic_score(
+    fft_score: float,
+    face_count: int,
+    dct_score: float = 0.0,
+    pil_img: Optional[Image.Image] = None,
+    copy_move_score: float = 0.0,
+    dire_score: float = 0.0,
+) -> float:
     """
     Deterministic dual-stream heuristic deepfake probability when ML model is unavailable.
-    Combines Frequency Domain (FFT/DCT) anomalies and Spatial Structural Features.
+    Combines Frequency Domain (FFT/DCT/DIRE) anomalies and Spatial Copy-Move / Structural Features.
     """
     # 1. Frequency Stream Contribution
-    freq_anomaly = max(fft_score, dct_score)
+    freq_anomaly = max(fft_score, dct_score, dire_score)
     
     # 2. Spatial Stream: Check for unnatural smoothness (low local variance in edges)
-    spatial_anomaly = 0.0
+    spatial_anomaly = copy_move_score
     if pil_img is not None:
         try:
             gray = np.array(pil_img.convert("L"), dtype=np.float32)
@@ -781,7 +912,7 @@ def _heuristic_score(fft_score: float, face_count: int, dct_score: float = 0.0, 
             # AI generated images (SD 3, Midjourney v6) are often extremely smooth
             # Real camera images typically have lap_var between 80 and 1500
             if lap_var < 80.0 or lap_var > 1500.0:
-                spatial_anomaly = 0.5
+                spatial_anomaly = max(spatial_anomaly, 0.5)
         except Exception:
             pass
 
