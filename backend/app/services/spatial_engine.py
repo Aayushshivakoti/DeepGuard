@@ -189,7 +189,8 @@ def load_spatial_model():
     if _model is not None:
         return _model
 
-    if not TORCH_AVAILABLE or settings.USE_MOCK_MODELS:
+    force_model = os.path.exists(settings.SPATIAL_MODEL_PATH)
+    if not TORCH_AVAILABLE or (settings.USE_MOCK_MODELS and not force_model):
         log.info("spatial_engine.mock_mode_active")
         return None
 
@@ -666,7 +667,7 @@ async def analyze_image(buffer: bytes) -> ImageAnalysisResult:
             deepfake_prob = float(probs[0, 1].item()) * 100.0
         except Exception as exc:
             log.warning("onnx.inference_failed", error=str(exc))
-            deepfake_prob = _heuristic_score(fft_score, face_count)
+            deepfake_prob = _heuristic_score(fft_score, face_count, dct_score=dct_score, pil_img=pil_img)
         # Use PyTorch model for Grad-CAM if available, else mock
         model = load_spatial_model()
         if model is not None and TORCH_AVAILABLE:
@@ -687,13 +688,13 @@ async def analyze_image(buffer: bytes) -> ImageAnalysisResult:
                 heatmap_b64 = _generate_gradcam_heatmap(model, pil_img, _transform, _device, faces, magnitude=magnitude)
             except Exception as exc:
                 log.warning("spatial_engine.inference_failed", error=str(exc))
-                deepfake_prob = _heuristic_score(fft_score, face_count)
+                deepfake_prob = _heuristic_score(fft_score, face_count, dct_score=dct_score, pil_img=pil_img)
                 heatmap_b64 = _mock_gradcam_heatmap(pil_img, deepfake_prob) if face_count > 0 or deepfake_prob > 40 else None
         else:
-            deepfake_prob = _heuristic_score(fft_score, face_count)
+            deepfake_prob = _heuristic_score(fft_score, face_count, dct_score=dct_score, pil_img=pil_img)
             heatmap_b64 = _mock_gradcam_heatmap(pil_img, deepfake_prob) if face_count > 0 or deepfake_prob > 40 else None
     else:
-        deepfake_prob = _heuristic_score(fft_score, face_count)
+        deepfake_prob = _heuristic_score(fft_score, face_count, dct_score=dct_score, pil_img=pil_img)
         heatmap_b64 = _mock_gradcam_heatmap(pil_img, deepfake_prob) if face_count > 0 or deepfake_prob > 40 else None
 
     # ── Step 4: Flag Generation ───────────────────────────────────────────────
@@ -762,13 +763,38 @@ async def analyze_image(buffer: bytes) -> ImageAnalysisResult:
     )
 
 
-def _heuristic_score(fft_score: float, face_count: int) -> float:
+def _heuristic_score(fft_score: float, face_count: int, dct_score: float = 0.0, pil_img: Optional[Image.Image] = None) -> float:
     """
-    Deterministic heuristic deepfake probability when ML model is unavailable.
-    Combines FFT anomaly score with presence/absence of faces.
+    Deterministic dual-stream heuristic deepfake probability when ML model is unavailable.
+    Combines Frequency Domain (FFT/DCT) anomalies and Spatial Structural Features.
     """
-    # Scale down the FFT anomaly contribution to avoid false positives in dev/mock environment
-    base = fft_score * 28.0
-    # Keep face presence neutral for deepfake likelihood
-    noise = np.random.uniform(-2.0, 2.0)
-    return float(np.clip(base + noise, 5.0, 97.0))
+    # 1. Frequency Stream Contribution
+    freq_anomaly = max(fft_score, dct_score)
+    
+    # 2. Spatial Stream: Check for unnatural smoothness (low local variance in edges)
+    spatial_anomaly = 0.0
+    if pil_img is not None:
+        try:
+            gray = np.array(pil_img.convert("L"), dtype=np.float32)
+            laplacian = cv2.Laplacian(gray, cv2.CV_64F)
+            lap_var = float(laplacian.var())
+            # AI generated images (SD 3, Midjourney v6) are often extremely smooth
+            # Real camera images typically have lap_var between 80 and 1500
+            if lap_var < 80.0 or lap_var > 1500.0:
+                spatial_anomaly = 0.5
+        except Exception:
+            pass
+
+    # Base score combines both streams
+    base = (0.6 * freq_anomaly + 0.4 * spatial_anomaly) * 100.0
+
+    # Active multiplication when both frequency anomalies are present
+    if fft_score > 0.4 and dct_score > 0.4:
+        base *= 1.35  # Active multiplication risk weight
+
+    # Face presence sensitivity
+    if face_count > 0:
+        base += 10.0
+
+    # Clip to valid percentage
+    return float(np.clip(base, 5.0, 99.0))

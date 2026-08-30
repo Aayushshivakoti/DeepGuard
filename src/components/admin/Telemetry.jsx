@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Activity, Cpu, Clock, AlertTriangle, HardDrive, Cpu as GpuIcon, RefreshCw } from 'lucide-react';
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
-import { getModelTelemetry } from '../../api/scanApi';
+import { getModelTelemetry, getActiveLearningStats, submitAdminOverride, triggerModelRetraining, getRetrainingStatus } from '../../api/scanApi';
 
 export default function Telemetry() {
   const [stats, setStats] = useState({
@@ -14,13 +14,75 @@ export default function Telemetry() {
     scan_throughput_tps: 2.4,
     today_scan_count: 42,
   });
+  const [alStats, setAlStats] = useState({
+    total_pending: 0,
+    confidence_bands: { low: 0, medium: 0, high: 0 },
+    total_overrides: 0,
+    model_version: "DeepGuard-v3.1",
+    calibration_health: 98.4,
+    pending_cases: []
+  });
   const [loading, setLoading] = useState(true);
+  const [retrainStatus, setRetrainStatus] = useState("IDLE"); // IDLE | RUNNING | SUCCESS | FAILURE
+  const [retrainTaskId, setRetrainTaskId] = useState(null);
+  const [isTriggeringRetrain, setIsTriggeringRetrain] = useState(false);
 
   const fetchTelemetry = async () => {
     setLoading(true);
-    const data = await getModelTelemetry();
-    setStats(data);
-    setLoading(false);
+    try {
+      const [telemetryData, alData] = await Promise.all([
+        getModelTelemetry(),
+        getActiveLearningStats()
+      ]);
+      setStats(telemetryData);
+      setAlStats(alData);
+    } catch (e) {
+      console.warn("Failed to fetch telemetry/active learning stats:", e);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleOverride = async (scanId, verdict) => {
+    try {
+      await submitAdminOverride(scanId, verdict);
+      setAlStats(prev => ({
+        ...prev,
+        total_pending: Math.max(prev.total_pending - 1, 0),
+        total_overrides: prev.total_overrides + 1,
+        pending_cases: prev.pending_cases.filter(c => c.scan_id !== scanId)
+      }));
+    } catch (e) {
+      console.error("Failed to submit admin override:", e);
+    }
+  };
+
+  const handleTriggerRetrain = async () => {
+    setIsTriggeringRetrain(true);
+    try {
+      const data = await triggerModelRetraining();
+      setRetrainStatus(data.status === "TRIGGERED" ? "RUNNING" : "IDLE");
+      setRetrainTaskId(data.task_id);
+    } catch (e) {
+      console.error("Failed to trigger retraining:", e);
+    } finally {
+      setIsTriggeringRetrain(false);
+    }
+  };
+
+  const checkRetrainStatus = async () => {
+    if (retrainStatus === "RUNNING") {
+      try {
+        const data = await getRetrainingStatus(retrainTaskId);
+        setRetrainStatus(data.status);
+        if (data.status === "SUCCESS" || data.status === "FAILURE") {
+          // Reload updated metrics
+          fetchTelemetry();
+        }
+      } catch (e) {
+        console.warn("Failed to check retrain status:", e);
+      }
+    }
   };
 
   useEffect(() => {
@@ -28,6 +90,12 @@ export default function Telemetry() {
     const interval = setInterval(fetchTelemetry, 8000);
     return () => clearInterval(interval);
   }, []);
+
+  useEffect(() => {
+    const statusInterval = setInterval(checkRetrainStatus, 5000);
+    return () => clearInterval(statusInterval);
+  }, [retrainStatus, retrainTaskId]);
+
 
   const telemetryHistory = [
     { time: '00:00', latency: stats.average_latency_ms * 0.9, throughput: stats.scan_throughput_tps * 0.8 },
@@ -157,6 +225,133 @@ export default function Telemetry() {
               <Area type="monotone" dataKey="latency" name="Latency (ms)" stroke="#06b6d4" fill="#06b6d4" fillOpacity={0.15} />
             </AreaChart>
           </ResponsiveContainer>
+        </div>
+      </div>
+
+      {/* Active Learning & Retraining Telemetry */}
+      <div className="p-6 rounded-2xl border border-slate-900 bg-slate-900/30 backdrop-blur-md space-y-6">
+        <div className="border-b border-slate-800 pb-3 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div>
+            <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center gap-2">
+              <RefreshCw size={14} className="text-cyan-400" />
+              Active Learning & Retraining Telemetry
+            </h4>
+            <p className="text-[11px] text-slate-400 mt-1">
+              Retraining statistics compiled from borderline scans, model version calibration status, and admin verdict overrides.
+            </p>
+          </div>
+          
+          <div className="flex items-center gap-3">
+            {/* Visual Batch Status Indicator */}
+            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-950 border border-slate-800/80 text-xs">
+              <span className={`w-2 h-2 rounded-full ${
+                retrainStatus === 'RUNNING' ? 'bg-amber-500 animate-pulse' :
+                retrainStatus === 'SUCCESS' ? 'bg-emerald-500' :
+                retrainStatus === 'FAILURE' ? 'bg-red-500' :
+                'bg-slate-500'
+              }`} />
+              <span className="font-bold text-slate-300">Retrain Job: {retrainStatus}</span>
+            </div>
+
+            <button
+              onClick={handleTriggerRetrain}
+              disabled={isTriggeringRetrain || retrainStatus === 'RUNNING'}
+              className={`px-4 py-1.5 rounded-xl border text-xs font-bold transition-all flex items-center gap-1.5 ${
+                retrainStatus === 'RUNNING'
+                  ? 'bg-amber-500/10 border-amber-500/20 text-amber-400 cursor-not-allowed'
+                  : 'bg-purple-500/25 border-purple-500/40 text-purple-300 hover:bg-purple-500/40'
+              }`}
+            >
+              {isTriggeringRetrain ? <RefreshCw className="animate-spin" size={13} /> : <Cpu size={13} />}
+              <span>Trigger Retrain Batch</span>
+            </button>
+          </div>
+        </div>
+
+
+        {/* AL KPI Cards */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-xs">
+          <div className="p-4 rounded-2xl bg-slate-950/40 border border-slate-800 space-y-1">
+            <span className="text-slate-400 font-medium">Pending Retrain Samples</span>
+            <p className="text-xl font-black text-amber-400 font-mono">{alStats.total_pending}</p>
+            <div className="flex gap-2 text-[10px] text-slate-500 mt-1">
+              <span>L: {alStats.confidence_bands.low}</span>
+              <span>M: {alStats.confidence_bands.medium}</span>
+              <span>H: {alStats.confidence_bands.high}</span>
+            </div>
+          </div>
+          
+          <div className="p-4 rounded-2xl bg-slate-950/40 border border-slate-800 space-y-1">
+            <span className="text-slate-400 font-medium">Resolved Admin Overrides</span>
+            <p className="text-xl font-black text-emerald-400 font-mono">{alStats.total_overrides}</p>
+            <span className="text-[10px] text-slate-500">Manual corrections incorporated</span>
+          </div>
+
+          <div className="p-4 rounded-2xl bg-slate-950/40 border border-slate-800 space-y-1">
+            <span className="text-slate-400 font-medium">Model Calibration Health</span>
+            <p className="text-xl font-black text-cyan-400 font-mono">{alStats.calibration_health}%</p>
+            <span className="text-[10px] text-slate-500">Version: {alStats.model_version}</span>
+          </div>
+        </div>
+
+        {/* Ambiguous Scan Queue Table */}
+        <div className="space-y-3">
+          <h5 className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Ambiguous Scan Queue</h5>
+          <div className="overflow-x-auto rounded-xl border border-slate-900 bg-slate-950/20">
+            <table className="w-full text-xs text-left">
+              <thead className="bg-slate-950 text-slate-400 uppercase tracking-wider text-[10px] border-b border-slate-900">
+                <tr>
+                  <th className="px-4 py-3">Scan ID</th>
+                  <th className="px-4 py-3">Media Path / Target</th>
+                  <th className="px-4 py-3">Initial Risk Score</th>
+                  <th className="px-4 py-3">Confidence Band</th>
+                  <th className="px-4 py-3 text-right">Corrective Verdict Override</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-900">
+                {alStats.pending_cases.length === 0 ? (
+                  <tr>
+                    <td colSpan={5} className="text-center py-6 text-slate-500">
+                      No pending ambiguous scans in active learning queue.
+                    </td>
+                  </tr>
+                ) : (
+                  alStats.pending_cases.map(item => (
+                    <tr key={item.scan_id} className="hover:bg-slate-900/10 transition-colors">
+                      <td className="px-4 py-3 font-mono text-[11px] text-slate-400">{item.scan_id}</td>
+                      <td className="px-4 py-3 truncate max-w-[200px] text-slate-300" title={item.media_path}>
+                        {item.media_path}
+                      </td>
+                      <td className="px-4 py-3 font-mono font-bold text-amber-400">{item.initial_risk_score}%</td>
+                      <td className="px-4 py-3">
+                        <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
+                          item.confidence_band === 'high'
+                            ? 'bg-red-500/10 text-red-400 border border-red-500/20'
+                            : 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
+                        }`}>
+                          {item.confidence_band}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-right space-x-2">
+                        <button
+                          onClick={() => handleOverride(item.scan_id, 'AUTHENTIC')}
+                          className="px-2.5 py-1 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 hover:border-emerald-500/40 hover:bg-emerald-500/20 transition-all font-bold text-[10px]"
+                        >
+                          Mark Authentic
+                        </button>
+                        <button
+                          onClick={() => handleOverride(item.scan_id, 'DEEPFAKE_DETECTED')}
+                          className="px-2.5 py-1 rounded bg-red-500/10 text-red-400 border border-red-500/20 hover:border-red-500/40 hover:bg-red-500/20 transition-all font-bold text-[10px]"
+                        >
+                          Mark Deepfake
+                        </button>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
         </div>
       </div>
     </div>

@@ -153,3 +153,28 @@ def scan_url_task(self, url: str) -> Dict[str, Any]:
     except Exception as exc:
         log.error("celery.scan_url_task.failed", error=str(exc))
         raise self.retry(exc=exc)
+
+
+@celery_app.task(
+    name="app.services.celery_tasks.retrain_model_task",
+    bind=True,
+)
+def retrain_model_task(self) -> Dict[str, Any]:
+    """Execute model retraining and update model version telemetry."""
+    import subprocess
+    import sys
+    import os
+    try:
+        # Run hard negative mining first
+        mine_script = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "scripts", "hard_negative_mining.py")
+        subprocess.run([sys.executable, mine_script], check=True)
+        
+        # Run training next
+        train_script = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "scripts", "train_model.py")
+        subprocess.run([sys.executable, train_script], check=True)
+        
+        return {"status": "SUCCESS", "message": "Model retrained and updated successfully"}
+    except Exception as exc:
+        log.error("celery.retrain_model_task.failed", error=str(exc))
+        raise
+

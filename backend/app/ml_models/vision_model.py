@@ -155,11 +155,16 @@ class DeepfakeVisionModel:
         self.use_mock = settings.USE_MOCK_MODELS
         self._target_layer = None  # For Grad-CAM
         self.router = GeneratorRouter()
-        if not self.use_mock:
-            self._load_model()
+
+        # Disable mock mode if weights are present
+        weight_path = settings.SPATIAL_MODEL_PATH
+        onnx_path = weight_path.replace(".pt", ".onnx")
+        if os.path.exists(weight_path) or os.path.exists(onnx_path):
+            self.use_mock = False
 
         if not self.use_mock:
             self._load_model()
+
 
     def _load_model(self):
         """Load PyTorch EfficientNet-B4 or ONNX session."""
@@ -392,32 +397,16 @@ class DeepfakeVisionModel:
         Analyzes high-frequency energy ratio as a proxy for GAN artifacts.
         """
         try:
-            # Dynamically compute FFT anomaly score for the image buffer
-            pil_image = Image.open(io.BytesIO(image_buffer)).convert("L")
-            gray = np.array(pil_image, dtype=np.float32)
-            fft = np.fft.fft2(gray)
-            fft_shifted = np.fft.fftshift(fft)
-            magnitude = np.log1p(np.abs(fft_shifted))
-            h, w = magnitude.shape
-            cy, cx = h // 2, w // 2
-            y_idx, x_idx = np.ogrid[:h, :w]
-            dist = np.sqrt((y_idx - cy) ** 2 + (x_idx - cx) ** 2)
-            max_dist = min(cy, cx)
-            high_freq_mask = dist > (0.7 * max_dist)
-            low_freq_mask = dist <= (0.3 * max_dist)
-            hf_energy = magnitude[high_freq_mask].sum()
-            lf_energy = magnitude[low_freq_mask].sum()
-            total_energy = magnitude.sum() + 1e-8
-            hf_ratio = hf_energy / total_energy
-            lf_ratio = lf_energy / total_energy
-            fft_score = float(np.clip((hf_ratio / (lf_ratio + 1e-6)) - 1.0, 0.0, 1.0))
-            
-            # Compute a scaled mock probability. Boost more aggressively to flag AI‑generated images.
-            prob = float(np.clip(fft_score * 80.0 + np.random.uniform(-2.0, 2.0), 20.0, 95.0))
+            from app.services.spatial_engine import _fft_anomaly_score, _dct_anomaly_score, _heuristic_score
+            pil_rgb = Image.open(io.BytesIO(image_buffer)).convert("RGB")
+            fft_score, _ = _fft_anomaly_score(pil_rgb)
+            dct_score = _dct_anomaly_score(pil_rgb)
+            prob = _heuristic_score(fft_score, 0, dct_score=dct_score, pil_img=pil_rgb)
             return prob, np.array([[100.0 - prob, prob]], dtype=np.float32)
         except Exception as e:
             log.warning("vision_model.mock_predict_failed", error=str(e))
             return 15.0, np.array([[85.0, 15.0]], dtype=np.float32)
+
 
     def get_model_info(self) -> Dict[str, Any]:
         """Return model metadata for API responses."""

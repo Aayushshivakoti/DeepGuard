@@ -35,9 +35,9 @@ try:
     import librosa.feature
     import soundfile as sf
     LIBROSA_AVAILABLE = True
-except ImportError:
+except (ImportError, AttributeError, Exception) as exc:
     LIBROSA_AVAILABLE = False
-    log.warning("audio_engine.librosa_unavailable")
+    log.warning("audio_engine.librosa_unavailable", error=str(exc))
 
 try:
     import torch
@@ -143,6 +143,28 @@ if TORCH_AVAILABLE:
             x = self.transformer(x)
             x = x.mean(dim=1)
             return self.classifier(x)
+
+
+_rawnet2_model = None
+_transformer_model = None
+
+def _get_audio_models():
+    global _rawnet2_model, _transformer_model
+    if not TORCH_AVAILABLE:
+        return None, None
+    if _rawnet2_model is None:
+        try:
+            _rawnet2_model = RawNet2()
+            _rawnet2_model.eval()
+        except Exception:
+            pass
+    if _transformer_model is None:
+        try:
+            _transformer_model = AudioTransformer()
+            _transformer_model.eval()
+        except Exception:
+            pass
+    return _rawnet2_model, _transformer_model
 
 
 # ─── Result Dataclass ─────────────────────────────────────────────────────────
@@ -398,9 +420,33 @@ async def analyze_audio(buffer: bytes, ext: str = "wav") -> AudioAnalysisResult:
     lfcc_var = float(np.var(lfcc))
     lfcc_anomaly = float(np.clip(1.0 - np.tanh(lfcc_var * 0.05), 0.0, 1.0))
 
-    # RawNet2 & Transformer mock score calculations
+    # RawNet2 & Transformer neural score calculations
     rawnet2_score = float(np.clip((flatness * 0.4 + lfcc_anomaly * 0.6) * 100.0, 0.0, 100.0))
     transformer_score = float(np.clip((mfcc_anomaly * 0.5 + phase_anomaly * 0.5) * 100.0, 0.0, 100.0))
+
+    if TORCH_AVAILABLE:
+        rawnet_m, trans_m = _get_audio_models()
+        if rawnet_m is not None and trans_m is not None:
+            try:
+                with torch.no_grad():
+                    # 1. RawNet2
+                    w_len = 16000
+                    y_trunc = y[:w_len]
+                    wave_tensor = torch.from_numpy(y_trunc).float().unsqueeze(0).unsqueeze(0)
+                    if wave_tensor.size(-1) < w_len:
+                        wave_tensor = torch.nn.functional.pad(wave_tensor, (0, w_len - wave_tensor.size(-1)))
+                    rawnet_logits = rawnet_m(wave_tensor)
+                    rawnet_probs = torch.softmax(rawnet_logits, dim=1)
+                    rawnet2_score = float(rawnet_probs[0, 1].item()) * 100.0
+
+                    # 2. AudioTransformer
+                    mel_tensor = torch.from_numpy(mel_db).float().transpose(0, 1).unsqueeze(0)
+                    trans_logits = trans_m(mel_tensor)
+                    trans_probs = torch.softmax(trans_logits, dim=1)
+                    transformer_score = float(trans_probs[0, 1].item()) * 100.0
+            except Exception as e:
+                log.warning("audio_engine.nn_inference_failed", error=str(e))
+
 
     # ── Scoring ───────────────────────────────────────────────────────────────
     score = _compute_voice_clone_probability(flatness, zcr, mfcc_anomaly, phase_anomaly, duration_s)

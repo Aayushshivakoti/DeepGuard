@@ -101,6 +101,12 @@ class Settings(BaseSettings):
 
     # ── CORS ──────────────────────────────────────────────────────────────────
     CORS_ORIGINS: str = "http://localhost:5173,http://localhost:5174,http://127.0.0.1:5174,http://localhost:3000,http://localhost:4173"
+    # ── Training & Data Augmentation Settings ────────────────────────────────────────
+    AUG_DATASET_BUCKET: str = "my-deepguard-datasets"
+    AUG_DATASET_PREFIX: str = "augmented/"
+    HARD_NEGATIVES_PREFIX: str = "hard-negatives/"
+    TRAINING_SCHEDULE: str = "daily"  # used by Celery Beat
+
 
     @property
     def cors_origins_list(self) -> List[str]:

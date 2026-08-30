@@ -1,6 +1,6 @@
 # Multi-stage Dockerfile for DeepGuard FastAPI Backend
 # Stage 1: Builder
-FROM python:3.10-slim AS builder
+FROM python:3.11-slim AS builder
 
 WORKDIR /build
 
@@ -13,13 +13,16 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
 
 # Stage 2: Runner
-FROM python:3.10-slim AS runner
+FROM python:3.11-slim AS runner
 
 WORKDIR /app
 
+# Install OpenCV system libraries and PostgreSQL requirements
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq5 \
     curl \
+    libgl1-mesa-glx \
+    libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /install /usr/local

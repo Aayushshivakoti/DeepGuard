@@ -477,4 +477,25 @@ export async function assignUserRole(userId, role) {
   return response.data;
 }
 
+export async function getActiveLearningStats() {
+  const response = await api.get('/admin/retrain-stats');
+  return response.data;
+}
+
+export async function submitAdminOverride(scanId, verdict) {
+  const response = await api.post('/admin/override', { scan_id: scanId, verdict });
+  return response.data;
+}
+
+export async function triggerModelRetraining() {
+  const response = await api.post('/admin/retrain/trigger');
+  return response.data;
+}
+
+export async function getRetrainingStatus(taskId) {
+  const response = await api.get(`/admin/retrain/status${taskId ? `?task_id=${taskId}` : ''}`);
+  return response.data;
+}
+
 export { MOCK_ADMIN_METRICS, MOCK_ALERT_FEED };
+

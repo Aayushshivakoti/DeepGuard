@@ -1,0 +1,23 @@
+[
+  {
+    "scan_id": "mock-makeup-001",
+    "score": 58.5,
+    "source": "mock_generator_makeup",
+    "storage_backend": "local",
+    "key": "hard-negatives/hard_neg_mock-makeup-001.jpg"
+  },
+  {
+    "scan_id": "mock-lighting-002",
+    "score": 62.1,
+    "source": "mock_generator_lighting",
+    "storage_backend": "local",
+    "key": "hard-negatives/hard_neg_mock-lighting-002.jpg"
+  },
+  {
+    "scan_id": "mock-studio-003",
+    "score": 45.9,
+    "source": "mock_generator_studio",
+    "storage_backend": "local",
+    "key": "hard-negatives/hard_neg_mock-studio-003.jpg"
+  }
+]

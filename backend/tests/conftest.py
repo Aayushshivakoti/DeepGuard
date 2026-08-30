@@ -18,6 +18,18 @@ from app.db.base import Base
 from app.db.session import get_db
 from main import create_application
 
+# Import models to register in metadata
+from app.db.models.audit_log import AuditLog
+from app.db.models.refresh_token import RefreshToken
+from app.db.models.retrain_queue import RetrainQueue
+from app.db.models.scan_record import ScanRecord
+from app.db.models.scan_result import ScanResult
+from app.db.models.scheduled_monitor import ScheduledMonitor
+from app.db.models.team import Team
+from app.db.models.user import User
+from app.db.models.webauthn_credential import WebAuthnCredential
+
+
 # ─── Test DB (in-memory SQLite for speed) ─────────────────────────────────────
 TEST_DB_URL = "sqlite+aiosqlite:///:memory:"
 

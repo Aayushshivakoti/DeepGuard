@@ -29,6 +29,8 @@ from PIL import Image
 from app.core.config import settings
 from app.schemas.scan import ForensicFlag
 from app.services.spatial_engine import analyze_image as spatial_analyze_image, ImageAnalysisResult
+from app.services.rppg_engine import extract_rppg_signal, verify_biological_pulse
+from app.services.cross_modal import check_audio_visual_sync
 
 log = structlog.get_logger(__name__)
 
@@ -269,6 +271,98 @@ def _temporal_consistency_score(frame_scores: List[float]) -> float:
     return inconsistency
 
 
+def _compute_landmark_jitter(frames_bgr: List[np.ndarray]) -> Tuple[float, float, float]:
+    """
+    Track facial bounding boxes and landmark coordinate shifts across consecutive frames (N to N+1).
+    Measures:
+      1. Landmark coordinate jitter (variance in normalized distance shifts).
+      2. Edge blurring fluctuation (variance of Laplacian variance in face regions).
+      3. Structural warping (aspect ratio changes of the face bounding boxes).
+    
+    Returns:
+      (jitter_score 0-1, edge_blur_score 0-1, warping_score 0-1)
+    """
+    if len(frames_bgr) < 2:
+        return 0.0, 0.0, 0.0
+
+    landmark_shifts = []
+    laplacian_variances = []
+    aspect_ratios = []
+
+    prev_landmarks = None
+    cascade = _get_face_cascade_t()
+
+    for frame in frames_bgr:
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        faces = cascade.detectMultiScale(gray, 1.1, 5, minSize=(60, 60))
+        
+        if len(faces) > 0:
+            x, y, w, h = faces[0]
+            # 1. Structural warping: aspect ratio
+            aspect_ratios.append(w / float(h))
+            
+            # 2. Edge blurring: Laplacian variance on face ROI
+            face_roi = gray[y:y+h, x:x+w]
+            if face_roi.size > 0:
+                laplacian_var = float(cv2.Laplacian(face_roi, cv2.CV_64F).var())
+                laplacian_variances.append(laplacian_var)
+            
+            # 3. Landmark coordinate shift tracking
+            from app.services.spatial_engine import _run_mtcnn_alignment
+            landmarks = _run_mtcnn_alignment((x, y, w, h))
+            curr_pts = np.array([
+                landmarks["left_eye"],
+                landmarks["right_eye"],
+                landmarks["nose"],
+                landmarks["left_mouth"],
+                landmarks["right_mouth"]
+            ], dtype=float)
+            
+            # Normalize landmark points relative to bounding box top-left and size
+            normalized_pts = curr_pts.copy()
+            normalized_pts[:, 0] = (normalized_pts[:, 0] - x) / float(w)
+            normalized_pts[:, 1] = (normalized_pts[:, 1] - y) / float(h)
+            
+            if prev_landmarks is not None:
+                # Calculate Euclidean distance shifts of landmarks from N to N+1
+                shifts = np.sqrt(np.sum((normalized_pts - prev_landmarks) ** 2, axis=1))
+                landmark_shifts.append(float(np.mean(shifts)))
+                
+            prev_landmarks = normalized_pts
+        else:
+            # Face lost: temporal warping/occlusion anomaly
+            aspect_ratios.append(1.0)
+            laplacian_variances.append(0.0)
+
+    # Calculate Jitter Anomaly Score (0-1)
+    jitter_score = 0.0
+    if landmark_shifts:
+        mean_shift = np.mean(landmark_shifts)
+        std_shift = np.std(landmark_shifts)
+        # Higher variation/std of shifts indicates jittery, unstable deepfake face replacement
+        jitter_score = float(np.clip((mean_shift * 5.0) + (std_shift * 15.0), 0.0, 1.0))
+
+    # Calculate Edge Blurring Fluctuation Score (0-1)
+    edge_blur_score = 0.0
+    if laplacian_variances and len(laplacian_variances) >= 2:
+        # Standard deviation of Laplacian variance measures temporal flickering
+        mean_lap = np.mean(laplacian_variances)
+        std_lap = np.std(laplacian_variances)
+        # Deepfakes experience sudden frame-level blurring
+        coef_of_variation = std_lap / (mean_lap + 1e-6)
+        edge_blur_score = float(np.clip(coef_of_variation * 1.5, 0.0, 1.0))
+
+    # Calculate Structural Warping Score (0-1)
+    warping_score = 0.0
+    if aspect_ratios and len(aspect_ratios) >= 2:
+        # standard deviation of aspect ratio changes
+        std_ar = np.std(aspect_ratios)
+        warping_score = float(np.clip(std_ar * 10.0, 0.0, 1.0))
+
+    return jitter_score, edge_blur_score, warping_score
+
+
+
 # ─── Mouth / Lip Region Analysis ──────────────────────────────────────────────
 
 def _extract_mouth_region(frame_bgr: np.ndarray) -> Optional[np.ndarray]:
@@ -464,9 +558,18 @@ async def analyze_video(buffer: bytes) -> VideoAnalysisResult:
         blink_anomaly = _compute_blink_rate_anomaly(eye_counts, fps, n_frames)
         lip_sync_anomaly = _compute_lip_sync_score(mouth_regions)
         
-        # ── rPPG Liveness Extraction ─────────────────────────────────────────
-        rppg_wave = _extract_rppg_signal(frames_bgr)
-        rppg_anomaly, rppg_desc = _compute_rppg_anomaly_score(rppg_wave)
+        # Landmark Jitter & Structural Warping Engine
+        jitter_anomaly, edge_blur_anomaly, warping_anomaly = _compute_landmark_jitter(frames_bgr)
+        
+        # ── Standalone biological rPPG Engine ────────────────────────────────
+        rppg_wave = extract_rppg_signal(frames_bgr)
+        rppg_anomaly, rppg_desc = verify_biological_pulse(rppg_wave, fps)
+
+        # ── Standalone Cross-Modal Sync Engine ────────────────────────────────
+        cross_modal_mismatch, sync_corr, sync_desc = check_audio_visual_sync(frames_bgr, buffer, fps)
+        
+        # Max-pool our direct lip movement variance and audio desync metrics
+        lip_sync_anomaly = max(lip_sync_anomaly, cross_modal_mismatch / 100.0)
 
         # ── Score Aggregation ─────────────────────────────────────────────────
         mean_frame_score = float(np.mean(frame_scores)) if frame_scores else 50.0
@@ -477,15 +580,22 @@ async def analyze_video(buffer: bytes) -> VideoAnalysisResult:
         # Calculate 3D-CNN / C3D volume anomaly
         c3d_anomaly = float(np.clip((mean_frame_score / 100.0 + inconsistency) / 2.0, 0.0, 1.0))
 
-        # Ensemble: 30% spatial, 20% rPPG, 20% BiLSTM, 10% C3D, 10% blink, 10% lip-sync
+        # Ensemble: 20% spatial, 15% rPPG, 15% BiLSTM, 10% C3D, 10% blink, 10% lip-sync, 10% jitter, 10% flickering/warp
         ensemble_score = (
-            0.30 * mean_frame_score +
-            0.20 * (rppg_anomaly * 100.0) +
-            0.20 * (bilstm_anomaly * 100.0) +
+            0.20 * mean_frame_score +
+            0.15 * (rppg_anomaly * 100.0) +
+            0.15 * (bilstm_anomaly * 100.0) +
             0.10 * (c3d_anomaly * 100.0) +
             0.10 * (blink_anomaly * 100.0) +
-            0.10 * (lip_sync_anomaly * 100.0)
+            0.10 * (lip_sync_anomaly * 100.0) +
+            0.10 * (jitter_anomaly * 100.0) +
+            0.10 * (max(edge_blur_anomaly, warping_anomaly) * 100.0)
         )
+        
+        # Spike confidence if structural warping, edge blurring, or micro-flickering exceeds natural human movement tolerances
+        if jitter_anomaly > 0.45 or edge_blur_anomaly > 0.45 or warping_anomaly > 0.35:
+            ensemble_score = max(ensemble_score, 88.5)
+            
         ensemble_score = float(np.clip(ensemble_score, 0.0, 100.0))
 
         # ── Flag Generation ───────────────────────────────────────────────────
@@ -531,6 +641,34 @@ async def analyze_video(buffer: bytes) -> VideoAnalysisResult:
                 description="Mouth region motion is inconsistent with expected speech patterns.",
             ))
 
+        if cross_modal_mismatch > 60.0:
+            flags.append(ForensicFlag(
+                label="Audio-Visual Lip Desync",
+                severity="high",
+                description=sync_desc,
+            ))
+
+        if jitter_anomaly > 0.45:
+            flags.append(ForensicFlag(
+                label="Facial Landmark Jitter Detected",
+                severity="high",
+                description=f"Micro-flickering and landmark coordinate coordinate shifts tracked across frames (score: {jitter_anomaly:.2f}).",
+            ))
+
+        if edge_blur_anomaly > 0.45:
+            flags.append(ForensicFlag(
+                label="Edge Blurring Anomaly",
+                severity="high",
+                description=f"Temporal blurring and texture resolution inconsistency detected in facial region (score: {edge_blur_anomaly:.2f}).",
+            ))
+
+        if warping_anomaly > 0.35:
+            flags.append(ForensicFlag(
+                label="Structural Warping Anomaly",
+                severity="high",
+                description=f"Face bounding box structural aspect ratio deformation tracked across consecutive frames (score: {warping_anomaly:.2f}).",
+            ))
+
         if max_frame_score > 80:
             flags.append(ForensicFlag(
                 label="Synthetic Face Frame Detected",
@@ -572,9 +710,15 @@ async def analyze_video(buffer: bytes) -> VideoAnalysisResult:
                 "bilstm_anomaly_score": round(bilstm_anomaly, 4),
                 "c3d_anomaly_score": round(c3d_anomaly, 4),
                 "rppg_anomaly": round(rppg_anomaly, 4),
+                "jitter_anomaly": round(jitter_anomaly, 4),
+                "edge_blur_anomaly": round(edge_blur_anomaly, 4),
+                "warping_anomaly": round(warping_anomaly, 4),
+                "cross_modal_mismatch": round(cross_modal_mismatch, 2),
+                "sync_correlation": round(sync_corr, 4),
             },
             processing_time_ms=processing_ms,
         )
+
 
     finally:
         try:

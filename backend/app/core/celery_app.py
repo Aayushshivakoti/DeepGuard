@@ -41,4 +41,12 @@ celery_app.conf.update(
         "app.services.celery_tasks.scan_url_task": {"queue": "url_queue"},
     },
     task_default_queue="default",
+    # ── Beat Schedule ─────────────────────────────────────────────────────────
+    beat_schedule={
+        "daily-model-retraining": {
+            "task": "app.services.celery_tasks.retrain_model_task",
+            "schedule": 86400.0,  # 24 hours in seconds
+        }
+    }
 )
+
