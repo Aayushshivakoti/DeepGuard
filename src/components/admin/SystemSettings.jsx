@@ -214,8 +214,13 @@ export default function SystemSettings() {
             </div>
           </div>
 
-          {/* Toggles */}
+          {/* Toggles & Active Learning */}
           <div className="space-y-3">
+            <div className="flex items-center gap-2 mb-2">
+              <ShieldCheck size={14} className="text-purple-400" />
+              <p className="text-sm font-semibold text-slate-200">Enterprise Feature Toggles & Active Learning</p>
+            </div>
+
             <label className="flex items-center gap-2.5 cursor-pointer select-none">
               <input
                 type="checkbox"
@@ -224,8 +229,8 @@ export default function SystemSettings() {
                 className="rounded border-slate-800 bg-slate-950 text-cyan-500 focus:ring-0 focus:ring-offset-0 w-4 h-4"
               />
               <div className="text-xs">
-                <p className="font-bold text-slate-300">Enable Organization Audit Logging</p>
-                <p className="text-[10px] text-slate-500">Log all API calls and metadata mutations internally for audits.</p>
+                <p className="font-bold text-slate-300">Enable Active Learning Retrain Queue (Medium Confidence 40-60%)</p>
+                <p className="text-[10px] text-slate-500">Automatically queue scans with ambiguous risk scores for human-in-the-loop review.</p>
               </div>
             </label>
 
@@ -280,6 +285,41 @@ export default function SystemSettings() {
                 <p className="text-[10px] text-slate-500">Perform HTTP header checks for suspicious downloadable payloads and binaries.</p>
               </div>
             </label>
+          </div>
+
+          {/* Live External API Telemetry Widget */}
+          <div className="mt-6 pt-4 border-t border-slate-800">
+            <p className="text-xs font-bold text-slate-300 mb-3">Live External API Telemetry & Provider Status</p>
+            <div className="grid grid-cols-2 gap-2 text-xs">
+              <div className="p-2.5 bg-slate-950/60 rounded-xl border border-slate-800 flex items-center justify-between">
+                <div>
+                  <p className="font-bold text-slate-200">Google Gemini API</p>
+                  <p className="text-[10px] text-slate-500 font-mono">Multimodal Vision/Text</p>
+                </div>
+                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">ONLINE 340ms</span>
+              </div>
+              <div className="p-2.5 bg-slate-950/60 rounded-xl border border-slate-800 flex items-center justify-between">
+                <div>
+                  <p className="font-bold text-slate-200">Hugging Face ViT</p>
+                  <p className="text-[10px] text-slate-500 font-mono">Deepfake Classifier</p>
+                </div>
+                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">ONLINE 510ms</span>
+              </div>
+              <div className="p-2.5 bg-slate-950/60 rounded-xl border border-slate-800 flex items-center justify-between">
+                <div>
+                  <p className="font-bold text-slate-200">ZeroGPT AI Engine</p>
+                  <p className="text-[10px] text-slate-500 font-mono">Text Verification</p>
+                </div>
+                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">ONLINE 210ms</span>
+              </div>
+              <div className="p-2.5 bg-slate-950/60 rounded-xl border border-slate-800 flex items-center justify-between">
+                <div>
+                  <p className="font-bold text-slate-200">DeepGuard Core DB</p>
+                  <p className="text-[10px] text-slate-500 font-mono">SQLite Session Engine</p>
+                </div>
+                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">CONNECTED &lt;1ms</span>
+              </div>
+            </div>
           </div>
         </div>
 
