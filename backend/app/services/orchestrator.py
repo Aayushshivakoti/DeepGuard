@@ -87,9 +87,13 @@ async def dispatch_file_scan(
     Dispatch a file buffer to the appropriate AI engine.
     """
     t_start = time.perf_counter()
-    engine_type, media_type_label = MIME_ROUTE_MAP.get(mime_type.lower(), ("unknown", "image"))
+    file_ext = (ext or (filename.rsplit(".", 1)[-1] if "." in filename else "")).lower()
+    if file_ext == "pdf" or mime_type.lower() == "application/pdf":
+        engine_type, media_type_label = "pdf", "pdf"
+    else:
+        engine_type, media_type_label = MIME_ROUTE_MAP.get(mime_type.lower(), ("unknown", "image"))
 
-    log.info("orchestrator.dispatch", filename=filename, mime=mime_type, engine=engine_type)
+    log.info("orchestrator.dispatch", filename=filename, mime=mime_type, ext=file_ext, engine=engine_type)
 
     # ── EXIF Metadata (for all image files) ──────────────────────────────────
     metadata_result = None
@@ -507,12 +511,17 @@ async def dispatch_file_scan(
         # Combine PDF structure/metadata forgery score AND NLP text score
         combined_pdf_score = max(forgery_score, ai_text_score, (result.confidence + metadata_score) / 2.0)
 
+        zg_score_val = zerogpt_res.get("score", 0.0) * 100.0 if (isinstance(zerogpt_res, dict) and zerogpt_res.get("available")) else None
+        gm_score_val = gemini_text_res.get("ai_text_score", 0.0) * 100.0 if (isinstance(gemini_text_res, dict) and gemini_text_res.get("available")) else None
+
         final_score, weights = aggregate_scores(
             spatial_score=0.0,
             temporal_score=0.0,
             audio_score=0.0,
             metadata_score=combined_pdf_score,
-            channels=["pdf"]
+            channels=["pdf"],
+            zerogpt_score=zg_score_val,
+            gemini_score=gm_score_val,
         )
         
         # If phishing engine found url threat, verdict is PHISHING_DETECTED; if text/structural AI, DEEPFAKE_DETECTED

@@ -107,6 +107,14 @@ def aggregate_scores(
 
     risk_score = min(max(risk_score, 0.0), 100.0)
 
+    # High-confidence override for document/text channels:
+    # If ZeroGPT or Gemini detects high AI probability (>=80%), override low structural scores to prevent false authentic verdicts
+    if (is_pdf or is_text):
+        if zerogpt_score is not None and zerogpt_score >= 80.0:
+            risk_score = max(risk_score, zerogpt_score)
+        if gemini_score is not None and gemini_score >= 80.0:
+            risk_score = max(risk_score, gemini_score)
+
     log.info(
         "ensemble.aggregated",
         channels=channels,
