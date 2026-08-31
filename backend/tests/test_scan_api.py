@@ -98,6 +98,28 @@ class TestFileScanEndpoint:
         data = response.json()
         assert data["media_type"] == "audio"
 
+    async def test_corrupted_video_upload_returns_400(self, client: AsyncClient):
+        # Fake MP4 container header bytes with corrupted body
+        corrupted_mp4_bytes = b"\x00\x00\x00\x1cftypisom\x00\x00\x02\x00isomiso2avc1mp41" + b"INVALID_CORRUPTED_STREAM_DATA" * 20
+        response = await client.post(
+            "/api/v1/scan/file",
+            files={"file": ("corrupted.mp4", corrupted_mp4_bytes, "video/mp4")},
+        )
+        assert response.status_code in (400, 422)
+        data = response.json()
+        assert "detail" in data
+
+    async def test_corrupted_audio_upload_returns_400(self, client: AsyncClient):
+        # Fake WAV magic header bytes with corrupted audio data
+        corrupted_wav_bytes = b"RIFF\x24\x00\x00\x00WAVEfmt \x10\x00\x00\x00\x01\x00\x01\x00\x44\xac\x00\x00\x88\x58\x01\x00\x02\x00\x10\x00data\x00\x00\x00\x00"
+        response = await client.post(
+            "/api/v1/scan/file",
+            files={"file": ("corrupted.wav", corrupted_wav_bytes, "audio/wav")},
+        )
+        assert response.status_code in (400, 422)
+        data = response.json()
+        assert "detail" in data
+
 
 class TestUrlScanEndpoint:
     """Tests for POST /api/v1/scan/url"""

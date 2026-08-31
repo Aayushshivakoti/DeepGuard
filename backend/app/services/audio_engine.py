@@ -197,6 +197,9 @@ def _load_audio(buffer: bytes, ext: str) -> tuple[np.ndarray, int]:
     Handles WAV, MP3, M4A by writing to a temp file first (Librosa limitation).
     Returns (waveform, sample_rate).
     """
+    if not buffer or len(buffer) == 0:
+        raise ValueError("Audio buffer is empty (0 bytes).")
+
     ext = ext.lower().lstrip(".")
     suffix = f".{ext}"
     with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
@@ -205,7 +208,14 @@ def _load_audio(buffer: bytes, ext: str) -> tuple[np.ndarray, int]:
 
     try:
         _import_librosa()
-        y, sr = librosa.load(tmp_path, sr=None, mono=True, duration=60.0)
+        try:
+            y, sr = librosa.load(tmp_path, sr=None, mono=True, duration=60.0)
+        except Exception as load_err:
+            raise ValueError(f"Audio decoding failed: {str(load_err)}") from load_err
+
+        if y is None or len(y) == 0:
+            raise ValueError("Audio stream contains no playable audio samples or zero duration.")
+
         return y, sr
     finally:
         try:

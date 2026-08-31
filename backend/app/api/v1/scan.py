@@ -405,10 +405,14 @@ async def scan_file(
             response.engine_metadata = response.engine_metadata or {}
             response.engine_metadata["hmac_signature_verified"] = hmac_verified
     except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc))
+        log.warning("scan_file.validation_or_decoding_error", error=str(exc))
+        raise HTTPException(status_code=400, detail=f"Media decoding or format error: {str(exc)}")
+    except RuntimeError as exc:
+        log.warning("scan_file.runtime_engine_error", error=str(exc))
+        raise HTTPException(status_code=500, detail=f"Analysis engine runtime error: {str(exc)}")
     except Exception as exc:
         log.error("scan_file.engine_error", error=str(exc))
-        raise HTTPException(status_code=500, detail="Analysis engine error.")
+        raise HTTPException(status_code=500, detail=f"Analysis engine error: {str(exc)}")
 
     # Quota increment
     if active_user:

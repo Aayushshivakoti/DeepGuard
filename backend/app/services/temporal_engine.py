@@ -147,29 +147,49 @@ def _extract_frames(video_path: str, max_frames: int = 16) -> List[np.ndarray]:
     Returns:
         List of BGR numpy arrays (OpenCV format)
     """
-    cap = cv2.VideoCapture(video_path)
+    if not os.path.exists(video_path) or os.path.getsize(video_path) == 0:
+        raise ValueError(f"Video file is empty or missing: {video_path}")
+
+    try:
+        cap = cv2.VideoCapture(video_path)
+    except Exception as open_err:
+        raise ValueError(f"OpenCV failed to initialize decoder for video: {open_err}") from open_err
+
     if not cap.isOpened():
-        raise ValueError(f"Cannot open video file: {video_path}")
+        raise ValueError(f"Unable to open or decode video stream: {video_path}")
 
-    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
-
-    if total_frames <= 0:
-        total_frames = 1000  # fallback
-
-    # Sample evenly across video duration
-    sample_indices = np.linspace(0, total_frames - 1, min(max_frames, total_frames), dtype=int)
     frames = []
+    try:
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
 
-    for idx in sample_indices:
-        cap.set(cv2.CAP_PROP_POS_FRAMES, int(idx))
-        ret, frame = cap.read()
-        if ret and frame is not None:
-            frames.append(frame)
+        if total_frames <= 0:
+            total_frames = 100  # Fallback frame estimate
 
-    cap.release()
-    log.debug("temporal_engine.frames_extracted", count=len(frames), total=total_frames, fps=fps)
-    return frames
+        sample_indices = np.linspace(0, max(0, total_frames - 1), min(max_frames, max(1, total_frames)), dtype=int)
+
+        for idx in sample_indices:
+            try:
+                cap.set(cv2.CAP_PROP_POS_FRAMES, int(idx))
+                ret, frame = cap.read()
+                if ret and frame is not None and isinstance(frame, np.ndarray) and frame.size > 0:
+                    frames.append(frame)
+            except Exception as frame_err:
+                log.warning("temporal_engine.frame_read_failed", index=idx, error=str(frame_err))
+
+        cap.release()
+        if not frames:
+            raise ValueError("Corrupted or unreadable video content: 0 valid frames extracted.")
+        log.debug("temporal_engine.frames_extracted", count=len(frames), total=total_frames, fps=fps)
+        return frames
+    except ValueError:
+        if 'cap' in locals() and cap is not None:
+            cap.release()
+        raise
+    except Exception as exc:
+        if 'cap' in locals() and cap is not None:
+            cap.release()
+        raise ValueError(f"Video frame decoding error: {str(exc)}") from exc
 
 
 # ─── Eye/Blink Landmark Detection ─────────────────────────────────────────────
