@@ -47,7 +47,7 @@ jobs:
       - name: Install System Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libpq-dev libgl1-mesa-glx libglib2.0-0
+          sudo apt-get install -y libpq-dev libgl1-mesa-glx libglib2.0-0 libsndfile1 ffmpeg
 
       - name: Install Python Requirements
         working-directory: backend
@@ -58,8 +58,8 @@ jobs:
       - name: Run Backend Tests
         working-directory: backend
         env:
-          DATABASE_URL: postgresql+asyncpg://postgres:postgrespassword@localhost:5432/deepguard_db
-          SYNC_DATABASE_URL: postgresql://postgres:postgrespassword@localhost:5432/deepguard_db
+          DATABASE_URL: sqlite+aiosqlite:///:memory:
+          SYNC_DATABASE_URL: sqlite:///:memory:
           REDIS_URL: redis://localhost:6379/0
           APP_ENV: testing
           USE_MOCK_MODELS: "true"
@@ -105,7 +105,7 @@ jobs:
       - name: Build Frontend Image
         uses: docker/build-push-action@v5
         with:
-          context: .
+          context: ./frontend
           file: ./frontend/Dockerfile
           push: false
           tags: deepguard-frontend:latest
