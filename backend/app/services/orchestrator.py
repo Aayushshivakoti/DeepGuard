@@ -448,9 +448,29 @@ async def dispatch_file_scan(
         result = await analyze_pdf(buffer)
         metadata_result = await anyio.to_thread.run_sync(analyze_file_metadata, buffer, filename)
         
-        # Advanced PDF Forgeries check
+        # Advanced PDF Forgeries & Text Stream Forensic Analysis
         pdf_forensics = await anyio.to_thread.run_sync(analyze_pdf_forensics, buffer)
+        extracted_text = pdf_forensics.get("extracted_text", "")
+        text_forensics = pdf_forensics.get("text_forensics", {})
         
+        zerogpt_res, gemini_text_res = {}, {}
+        if extracted_text and len(extracted_text) >= 30:
+            try:
+                zerogpt_res, gemini_text_res = await asyncio.gather(
+                    asyncio.wait_for(
+                        zerogpt_client.detect_ai_text(extracted_text),
+                        timeout=settings.EXTERNAL_API_TIMEOUT_SEC + 1.0,
+                    ),
+                    asyncio.wait_for(
+                        gemini_client.analyze_text_content(extracted_text),
+                        timeout=settings.EXTERNAL_API_TIMEOUT_SEC + 1.0,
+                    ),
+                    return_exceptions=True,
+                )
+            except Exception as exc:
+                log.warning("orchestrator.pdf_text_external_api_failed", error=str(exc))
+                zerogpt_res, gemini_text_res = {}, {}
+
         all_flags = result.flags + (metadata_result.flags if metadata_result else [])
         for finding in pdf_forensics.get("findings", []):
             all_flags.append(ForensicFlag(
@@ -459,8 +479,33 @@ async def dispatch_file_scan(
                 description=finding["description"],
             ))
 
+        ai_text_score = float(text_forensics.get("ai_text_score", 0.0))
+        if isinstance(zerogpt_res, dict) and zerogpt_res.get("available"):
+            zg_score = zerogpt_res.get("score", 0.0) * 100.0
+            ai_text_score = max(ai_text_score, zg_score)
+            if zg_score >= 50.0:
+                all_flags.append(ForensicFlag(
+                    label="ZeroGPT AI Text Signature",
+                    severity="high" if zg_score >= 75 else "medium",
+                    description=f"ZeroGPT detected {zerogpt_res.get('fake_percentage', 0.0):.1f}% AI text generation probability in document.",
+                ))
+
+        if isinstance(gemini_text_res, dict) and gemini_text_res.get("available"):
+            gm_score = gemini_text_res.get("ai_text_score", 0.0) * 100.0
+            ai_text_score = max(ai_text_score, gm_score)
+            if gemini_text_res.get("flags"):
+                for f_desc in gemini_text_res["flags"]:
+                    all_flags.append(ForensicFlag(
+                        label="Gemini Document Text Finding",
+                        severity="high" if gm_score >= 70 else "medium",
+                        description=str(f_desc),
+                    ))
+
         metadata_score = float(getattr(metadata_result, "confidence", 75.0 if (metadata_result and metadata_result.flags) else 10.0))
-        combined_pdf_score = (result.confidence + metadata_score + pdf_forensics["forgery_score"]) / 3.0
+        forgery_score = float(pdf_forensics.get("forgery_score", 0.0))
+        
+        # Combine PDF structure/metadata forgery score AND NLP text score
+        combined_pdf_score = max(forgery_score, ai_text_score, (result.confidence + metadata_score) / 2.0)
 
         final_score, weights = aggregate_scores(
             spatial_score=0.0,
@@ -469,8 +514,12 @@ async def dispatch_file_scan(
             metadata_score=combined_pdf_score,
             channels=["pdf"]
         )
-        if final_score >= 65:
+        
+        # If phishing engine found url threat, verdict is PHISHING_DETECTED; if text/structural AI, DEEPFAKE_DETECTED
+        if result.verdict == "PHISHING_DETECTED":
             verdict = "PHISHING_DETECTED"
+        elif final_score >= 65:
+            verdict = "DEEPFAKE_DETECTED"
         elif final_score >= 35:
             verdict = "SUSPICIOUS"
         else:
@@ -485,6 +534,9 @@ async def dispatch_file_scan(
             engine_metadata={
                 **result.engine_metadata,
                 "pdf_forensics": pdf_forensics,
+                "ai_text_score": round(ai_text_score, 2),
+                "zerogpt_analysis": zerogpt_res if isinstance(zerogpt_res, dict) else {},
+                "gemini_text_analysis": gemini_text_res if isinstance(gemini_text_res, dict) else {},
                 "ensemble_weights": weights,
             },
             processing_time_ms=int((time.perf_counter() - t_start) * 1000),

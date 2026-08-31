@@ -22,12 +22,124 @@ import structlog
 log = structlog.get_logger(__name__)
 
 
+def extract_pdf_text(buffer: bytes) -> str:
+    """Extract raw text content from PDF bytes using PyPDF2 with regex fallback."""
+    text_chunks: List[str] = []
+    try:
+        from PyPDF2 import PdfReader
+        reader = PdfReader(io.BytesIO(buffer))
+        for page in reader.pages:
+            t = page.extract_text()
+            if t:
+                text_chunks.append(t)
+    except Exception as e:
+        log.debug("pdf_forensic.text_extraction_fallback", error=str(e))
+
+    extracted = "\n".join(text_chunks).strip()
+    if not extracted:
+        # Fallback raw stream regex extraction for text blocks
+        try:
+            content = buffer.decode("latin-1", errors="ignore")
+            text_blocks = re.findall(r"\(([^)]+)\)\s*Tj", content)
+            extracted = " ".join(text_blocks).strip()
+        except Exception:
+            extracted = ""
+
+    return extracted
+
+
+def analyze_text_forensics(text_str: str) -> Dict[str, Any]:
+    """
+    Compute linguistic perplexity proxies, sentence burstiness (length variance),
+    and LLM transition phrase occurrences to detect AI-generated text in documents.
+    """
+    if not text_str or len(text_str.strip()) < 30:
+        return {
+            "ai_text_score": 0.0,
+            "burstiness": 0.5,
+            "llm_phrase_count": 0,
+            "findings": [],
+        }
+
+    import numpy as np
+
+    # Split into sentences
+    sentences = [s.strip() for s in re.split(r"[.!?]+", text_str) if len(s.strip()) > 3]
+    if not sentences:
+        return {
+            "ai_text_score": 0.0,
+            "burstiness": 0.5,
+            "llm_phrase_count": 0,
+            "findings": [],
+        }
+
+    sentence_lengths = [len(s.split()) for s in sentences]
+    mean_len = float(np.mean(sentence_lengths))
+    std_len = float(np.std(sentence_lengths))
+
+    # Burstiness: std / (mean + 1e-6). LLMs generate remarkably uniform sentence lengths (burstiness < 0.35)
+    burstiness = float(std_len / (mean_len + 1e-6))
+
+    # LLM signature transition phrases
+    llm_indicator_phrases = [
+        "in conclusion", "it is important to note", "furthermore", "moreover",
+        "in summary", "delve into", "testament to", "tapestry of",
+        "it is worth noting", "crucial role", "in today's digital landscape",
+        "overall, it", "subsequently", "relentless pursuit", "beacon of"
+    ]
+
+    lower_text = text_str.lower()
+    found_llm_phrases = [phrase for phrase in llm_indicator_phrases if phrase in lower_text]
+
+    # Calculate AI Text Score (0 - 100)
+    ai_score = 0.0
+
+    # 1. Low burstiness impact (uniform sentences)
+    if burstiness < 0.3:
+        ai_score += 45.0
+    elif burstiness < 0.45:
+        ai_score += 25.0
+
+    # 2. LLM phrase impact
+    phrase_impact = len(found_llm_phrases) * 15.0
+    ai_score += min(phrase_impact, 45.0)
+
+    # 3. High vocabulary predictability (lack of colloquial variation)
+    if len(sentences) >= 4 and mean_len > 12:
+        ai_score += 10.0
+
+    ai_score = float(np.clip(ai_score, 0.0, 100.0))
+
+    findings = []
+    if burstiness < 0.35:
+        findings.append({
+            "category": "LOW_SENTENCE_BURSTINESS",
+            "severity": "high" if burstiness < 0.25 else "medium",
+            "description": f"Unnatural sentence length uniformity detected (burstiness: {burstiness:.2f}), characteristic of LLM text generation.",
+        })
+
+    if found_llm_phrases:
+        findings.append({
+            "category": "LLM_TRANSITION_SIGNATURES",
+            "severity": "medium",
+            "description": f"Extracted text contains known LLM generator markers: '{', '.join(found_llm_phrases[:3])}'.",
+        })
+
+    return {
+        "ai_text_score": round(ai_score, 2),
+        "burstiness": round(burstiness, 3),
+        "llm_phrase_count": len(found_llm_phrases),
+        "llm_phrases_found": found_llm_phrases,
+        "findings": findings,
+    }
+
+
 def analyze_pdf_forensics(buffer: bytes) -> Dict[str, Any]:
     """
-    Perform deep forensic analysis on a PDF document.
+    Perform deep forensic analysis on a PDF document including text stream evaluation.
 
     Returns dict with forgery_score (0-100), findings, metadata_analysis,
-    font_analysis, and structure_analysis.
+    font_analysis, structure_analysis, and text_forensics.
     """
     findings: List[Dict[str, Any]] = []
     forgery_score = 0.0
@@ -58,7 +170,14 @@ def analyze_pdf_forensics(buffer: bytes) -> Dict[str, Any]:
     findings.extend(threats)
     forgery_score += len(threats) * 15
 
-    # 5. Digital signature check
+    # 5. Text & NLP Forensics
+    extracted_text = extract_pdf_text(buffer)
+    text_forensics = analyze_text_forensics(extracted_text)
+    if text_forensics.get("findings"):
+        findings.extend(text_forensics["findings"])
+        forgery_score += text_forensics["ai_text_score"] * 0.6
+
+    # 6. Digital signature check
     sig_check = _check_digital_signatures(buffer)
     if sig_check.get("has_signature") and not sig_check.get("is_valid"):
         findings.append({
@@ -73,6 +192,9 @@ def analyze_pdf_forensics(buffer: bytes) -> Dict[str, Any]:
     return {
         "forgery_score": round(forgery_score, 2),
         "is_suspicious": forgery_score > 30,
+        "extracted_text": extracted_text[:500],
+        "text_length": len(extracted_text),
+        "text_forensics": text_forensics,
         "findings": findings,
         "metadata_analysis": metadata,
         "font_analysis": font_analysis,
