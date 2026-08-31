@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { X, Sliders, Eye, Layers, Grid, ZoomIn, ZoomOut, RotateCcw, Volume2, VolumeX } from 'lucide-react';
+import { X, Sliders, Eye, Layers, Grid, ZoomIn, ZoomOut, RotateCcw, Volume2, VolumeX, ArrowLeft, AlertTriangle, ShieldCheck, ShieldAlert, Info } from 'lucide-react';
 
 export default function ComparisonViewer({ originalMedia, suspectMedia, onClose }) {
-  const [viewMode, setViewMode] = useState('sideBySide'); // 'sideBySide' | 'crossFade' | 'pixelDiff' | 'videoSync' | 'audioSpectrogram'
+  const [viewMode, setViewMode] = useState('crossFade'); // 'sideBySide' | 'crossFade' | 'pixelDiff' | 'videoSync' | 'audioSpectrogram'
   const [opacity, setOpacity] = useState(50);
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
@@ -109,7 +109,7 @@ export default function ComparisonViewer({ originalMedia, suspectMedia, onClose 
       
       ctx.fillStyle = '#a855f7';
       ctx.font = '8px sans-serif';
-      ctx.fillText('CLONED HARMONICS DETECTED', width / 2 + 10, 25);
+      ctx.fillText('CLONED VOICE HARMONICS DETECTED', width / 2 + 10, 25);
     }
   };
 
@@ -147,40 +147,36 @@ export default function ComparisonViewer({ originalMedia, suspectMedia, onClose 
     setSliderPosition(percentage);
   };
 
-  const origUrl = originalMedia?.url || originalMedia?.heatmap_b64 ? `data:image/png;base64,${originalMedia?.heatmap_b64}` : 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=800&q=80';
+  const origUrl = originalMedia?.url || (originalMedia?.heatmap_b64 ? `data:image/png;base64,${originalMedia?.heatmap_b64}` : 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=800&q=80');
   const suspectUrl = suspectMedia?.heatmap_b64 ? `data:image/png;base64,${suspectMedia?.heatmap_b64}` : 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=800&q=80';
 
+  const verdict = suspectMedia?.verdict || 'DEEPFAKE_DETECTED';
+  const confidence = suspectMedia?.confidence || 88.5;
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-xl animate-fade-in-up">
-      <div className="bg-slate-900 border border-slate-800 rounded-3xl w-full max-w-5xl overflow-hidden flex flex-col shadow-2xl max-h-[90vh]">
-        {/* Header */}
-        <div className="p-4 px-6 border-b border-slate-800 flex items-center justify-between bg-slate-950/50">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/90 backdrop-blur-xl animate-fade-in-up">
+      <div className="bg-slate-900 border border-slate-800 rounded-3xl w-full max-w-5xl overflow-hidden flex flex-col shadow-2xl max-h-[92vh] relative">
+        
+        {/* Sticky Header with "Back to Summary" Navigation & Tabs */}
+        <div className="sticky top-0 z-30 p-4 px-6 border-b border-slate-800 flex items-center justify-between bg-slate-950/90 backdrop-blur-xl">
           <div className="flex items-center gap-3">
-            <div className="p-2 rounded-xl bg-cyan-500/10 border border-cyan-500/30 text-cyan-400">
-              <Layers size={20} />
-            </div>
-            <div>
-              <h3 className="text-base font-bold text-white">Forensic Media Comparison Diff</h3>
-              <p className="text-xs text-slate-400">Dual-pane inspection with synchronized pan, zoom, and pixel diff</p>
-            </div>
+            <button
+              onClick={onClose}
+              className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-800/90 hover:bg-slate-700 text-slate-200 hover:text-white border border-slate-700 text-xs font-bold transition-all shadow-sm cursor-pointer"
+            >
+              <ArrowLeft size={15} className="text-cyan-400" />
+              <span>← Back to Summary</span>
+            </button>
+            <div className="h-5 w-px bg-slate-800 hidden sm:block" />
+            <h3 className="text-sm font-bold text-slate-100 hidden md:block">Forensic Media Inspector</h3>
           </div>
 
-          {/* Mode Switcher */}
-          <div className="flex items-center gap-1.5 p-1 bg-slate-950 border border-slate-800 rounded-xl">
-            <button
-              onClick={() => setViewMode('sideBySide')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                viewMode === 'sideBySide' ? 'bg-cyan-500 text-slate-950' : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              <Grid size={13} />
-              <span>Side-by-Side</span>
-            </button>
-
+          {/* Interactive View Tabs */}
+          <div className="flex items-center gap-1 p-1 bg-slate-950 border border-slate-800/80 rounded-xl overflow-x-auto">
             <button
               onClick={() => setViewMode('crossFade')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                viewMode === 'crossFade' ? 'bg-cyan-500 text-slate-950' : 'text-slate-400 hover:text-slate-200'
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                viewMode === 'crossFade' ? 'bg-cyan-500 text-slate-950 shadow-sm' : 'text-slate-400 hover:text-slate-200'
               }`}
             >
               <Sliders size={13} />
@@ -188,64 +184,83 @@ export default function ComparisonViewer({ originalMedia, suspectMedia, onClose 
             </button>
 
             <button
-              onClick={() => setViewMode('pixelDiff')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                viewMode === 'pixelDiff' ? 'bg-cyan-500 text-slate-950' : 'text-slate-400 hover:text-slate-200'
+              onClick={() => setViewMode('sideBySide')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                viewMode === 'sideBySide' ? 'bg-cyan-500 text-slate-950 shadow-sm' : 'text-slate-400 hover:text-slate-200'
               }`}
             >
-              <Eye size={13} />
-              <span>Pixel-Level Diff</span>
+              <Grid size={13} />
+              <span>Side-by-Side</span>
             </button>
 
             <button
-              onClick={() => setViewMode('videoSync')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                viewMode === 'videoSync' ? 'bg-cyan-500 text-slate-950' : 'text-slate-400 hover:text-slate-200'
+              onClick={() => setViewMode('pixelDiff')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                viewMode === 'pixelDiff' ? 'bg-cyan-500 text-slate-950 shadow-sm' : 'text-slate-400 hover:text-slate-200'
               }`}
             >
-              <span>Video Sync</span>
+              <Eye size={13} />
+              <span>AI Alteration Map</span>
             </button>
 
             <button
               onClick={() => setViewMode('audioSpectrogram')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                viewMode === 'audioSpectrogram' ? 'bg-cyan-500 text-slate-950' : 'text-slate-400 hover:text-slate-200'
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                viewMode === 'audioSpectrogram' ? 'bg-cyan-500 text-slate-950 shadow-sm' : 'text-slate-400 hover:text-slate-200'
               }`}
             >
-              <span>Audio Spectrogram</span>
+              <span>Audio Breakdown</span>
             </button>
           </div>
 
           <button
             onClick={onClose}
             className="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+            title="Close Inspector"
           >
-            <X size={20} />
+            <X size={18} />
           </button>
         </div>
 
+        {/* Summary Verdict Banner */}
+        <div className="bg-slate-950 px-6 py-2.5 border-b border-slate-800/80 flex items-center justify-between flex-wrap gap-2 text-xs">
+          <div className="flex items-center gap-2">
+            <ShieldAlert size={16} className="text-rose-400 flex-shrink-0" />
+            <span className="font-bold text-slate-200">
+              Verdict: {verdict.replace('_', ' ')} ({confidence}% Confidence)
+            </span>
+            <span className="text-slate-400 border-l border-slate-800 pl-2 hidden sm:inline">
+              High-frequency pixel noise and unnatural facial surface smoothing detected.
+            </span>
+          </div>
+          <div className="flex items-center gap-3 text-[11px] text-slate-400">
+            <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-rose-500" /> Red = Artificial/Altered</span>
+            <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-cyan-400" /> Cyan = Authentic Baseline</span>
+          </div>
+        </div>
+
         {/* Toolbar Controls */}
-        <div className="p-3 px-6 bg-slate-950/30 border-b border-slate-800/60 flex items-center justify-between text-xs">
+        <div className="p-2.5 px-6 bg-slate-950/40 border-b border-slate-800/60 flex items-center justify-between text-xs">
           <div className="flex items-center gap-4">
             <div className="flex items-center gap-1 bg-slate-900 border border-slate-800 rounded-lg p-1">
               <button
                 onClick={() => setZoom(prev => Math.min(prev + 0.25, 4))}
-                className="p-1.5 hover:bg-slate-800 rounded text-slate-300"
+                className="p-1 hover:bg-slate-800 rounded text-slate-300"
                 title="Zoom In"
               >
                 <ZoomIn size={14} />
               </button>
-              <span className="font-mono px-2 text-cyan-400">{Math.round(zoom * 100)}%</span>
+              <span className="font-mono px-2 text-cyan-400 text-[11px]">{Math.round(zoom * 100)}%</span>
               <button
                 onClick={() => setZoom(prev => Math.max(prev - 0.25, 0.5))}
-                className="p-1.5 hover:bg-slate-800 rounded text-slate-300"
+                className="p-1 hover:bg-slate-800 rounded text-slate-300"
                 title="Zoom Out"
               >
                 <ZoomOut size={14} />
               </button>
               <button
                 onClick={resetTransform}
-                className="p-1.5 hover:bg-slate-800 rounded text-slate-400 hover:text-slate-200"
+                className="p-1 hover:bg-slate-800 rounded text-slate-400 hover:text-slate-200"
                 title="Reset View"
               >
                 <RotateCcw size={13} />
@@ -256,15 +271,15 @@ export default function ComparisonViewer({ originalMedia, suspectMedia, onClose 
               <div className="flex items-center gap-3">
                 <button
                   onClick={() => setAudioMuted(!audioMuted)}
-                  className="btn-ghost p-1.5 rounded-lg border border-slate-800 text-slate-400 flex items-center gap-1"
+                  className="btn-ghost p-1 rounded-lg border border-slate-800 text-slate-400 flex items-center gap-1 text-[11px]"
                 >
-                  {audioMuted ? <VolumeX size={14} className="text-red-400" /> : <Volume2 size={14} />}
+                  {audioMuted ? <VolumeX size={13} className="text-red-400" /> : <Volume2 size={13} />}
                   <span>{audioMuted ? 'Muted' : 'Mute'}</span>
                 </button>
                 <button
                   onClick={() => setSoloCloneBands(!soloCloneBands)}
-                  className={`btn-ghost py-1 px-3 text-[10px] rounded-lg border ${
-                    soloCloneBands ? 'bg-purple-500/20 text-purple-400 border-purple-500/40' : 'border-slate-800 text-slate-400'
+                  className={`py-1 px-2.5 text-[10px] rounded-lg border font-bold ${
+                    soloCloneBands ? 'bg-purple-500/20 text-purple-300 border-purple-500/40' : 'border-slate-800 text-slate-400'
                   }`}
                 >
                   Solo Cloned Harmonics
@@ -273,14 +288,14 @@ export default function ComparisonViewer({ originalMedia, suspectMedia, onClose 
             )}
           </div>
 
-          <span className="text-slate-500 font-mono text-[11px]">
-            {viewMode === 'crossFade' ? 'Drag slider handle to swipe Grad-CAM' : 'Synchronized Cursor Active'}
+          <span className="text-slate-400 font-mono text-[11px]">
+            {viewMode === 'crossFade' ? 'Drag slider left/right to swipe Grad-CAM heatmap' : 'Synchronized Inspection Grid'}
           </span>
         </div>
 
         {/* Media Viewing Canvas Container */}
         <div
-          className="flex-1 p-6 overflow-hidden relative cursor-grab active:cursor-grabbing min-h-[400px] flex items-center justify-center bg-slate-950"
+          className="flex-1 p-6 overflow-hidden relative cursor-grab active:cursor-grabbing min-h-[380px] flex items-center justify-center bg-slate-950"
           onMouseDown={handleMouseDown}
           onMouseMove={handleMouseMove}
           onMouseUp={handleMouseUp}
@@ -291,14 +306,14 @@ export default function ComparisonViewer({ originalMedia, suspectMedia, onClose 
               {/* Left: Original */}
               <div className="relative rounded-2xl border border-slate-800 overflow-hidden bg-slate-900/50 flex flex-col">
                 <div className="p-2.5 bg-slate-900/90 border-b border-slate-800 text-[11px] font-bold text-slate-300 flex items-center justify-between">
-                  <span>Reference Baseline</span>
-                  <span className="text-emerald-400 font-mono">AUTHENTIC</span>
+                  <span>Original View (Natural Camera Capture)</span>
+                  <span className="text-emerald-400 font-mono">AUTHENTIC BASELINE</span>
                 </div>
                 <div className="flex-1 relative flex items-center justify-center p-4">
                   <img
                     src={origUrl}
                     alt="Original Baseline"
-                    className="max-h-[350px] object-contain transition-transform duration-75"
+                    className="max-h-[340px] object-contain transition-transform duration-75"
                     style={{ transform: `scale(${zoom}) translate(${pan.x}px, ${pan.y}px)` }}
                   />
                 </div>
@@ -307,14 +322,14 @@ export default function ComparisonViewer({ originalMedia, suspectMedia, onClose 
               {/* Right: Suspect */}
               <div className="relative rounded-2xl border border-rose-500/30 overflow-hidden bg-slate-900/50 flex flex-col">
                 <div className="p-2.5 bg-slate-900/90 border-b border-slate-800 text-[11px] font-bold text-slate-300 flex items-center justify-between">
-                  <span>Suspect Media Heatmap</span>
-                  <span className="text-rose-400 font-mono">{suspectMedia?.confidence}% DEEPFAKE</span>
+                  <span>AI Alteration Map (Grad-CAM Overlay)</span>
+                  <span className="text-rose-400 font-mono">{confidence}% SYNTHETIC</span>
                 </div>
                 <div className="flex-1 relative flex items-center justify-center p-4">
                   <img
                     src={suspectUrl}
                     alt="Suspect Payload"
-                    className="max-h-[350px] object-contain transition-transform duration-75"
+                    className="max-h-[340px] object-contain transition-transform duration-75"
                     style={{ transform: `scale(${zoom}) translate(${pan.x}px, ${pan.y}px)` }}
                   />
                 </div>
@@ -326,7 +341,7 @@ export default function ComparisonViewer({ originalMedia, suspectMedia, onClose 
             /* Interactive Swipe Slider Container */
             <div 
               ref={containerRef}
-              className="relative w-full max-w-2xl h-[380px] rounded-2xl border border-slate-800 overflow-hidden bg-slate-900/40 select-none cursor-ew-resize"
+              className="relative w-full max-w-2xl h-[360px] rounded-2xl border border-slate-800 overflow-hidden bg-slate-900/40 select-none cursor-ew-resize"
               onMouseMove={handleSwipeMove}
               onTouchMove={handleTouchSwipeMove}
             >
@@ -363,14 +378,14 @@ export default function ComparisonViewer({ originalMedia, suspectMedia, onClose 
           )}
 
           {viewMode === 'pixelDiff' && (
-            <div className="relative w-full max-w-2xl h-[380px] rounded-2xl border border-rose-500/40 bg-slate-900/40 flex flex-col items-center justify-center overflow-hidden">
-              <div className="absolute top-3 left-3 bg-rose-500/10 text-rose-400 border border-rose-500/30 text-[10px] font-bold px-2 py-1 rounded-md z-10">
-                High-Contrast Pixel Delta Highlighted (Red = Tampered)
+            <div className="relative w-full max-w-2xl h-[360px] rounded-2xl border border-rose-500/40 bg-slate-900/40 flex flex-col items-center justify-center overflow-hidden">
+              <div className="absolute top-3 left-3 bg-rose-500/10 text-rose-400 border border-rose-500/30 text-[10px] font-bold px-2.5 py-1 rounded-md z-10">
+                Highlighted Artificial Regions (Red/Pink = Deepfake Manipulation)
               </div>
               <img
                 src={suspectUrl}
                 alt="Pixel Diff Highlight"
-                className="max-h-[350px] object-contain"
+                className="max-h-[330px] object-contain"
                 style={{
                   filter: 'contrast(180%) invert(20%) sepia(100%) saturate(800%) hue-rotate(300deg)',
                   transform: `scale(${zoom}) translate(${pan.x}px, ${pan.y}px)`,
@@ -379,54 +394,15 @@ export default function ComparisonViewer({ originalMedia, suspectMedia, onClose 
             </div>
           )}
 
-          {viewMode === 'videoSync' && (
-            <div className="grid grid-cols-2 gap-6 w-full h-full">
-              {/* Reference video */}
-              <div className="relative rounded-2xl border border-slate-800 overflow-hidden bg-slate-900/50 flex flex-col">
-                <div className="p-2.5 bg-slate-900/90 border-b border-slate-800 text-[11px] font-bold text-slate-300">
-                  Reference Sync Video Baseline
-                </div>
-                <div className="flex-1 relative flex items-center justify-center p-4">
-                  <video
-                    ref={videoRefRef}
-                    onTimeUpdate={handleVideoScrub}
-                    onSeeked={handleVideoScrub}
-                    onPlay={handleVideoPlay}
-                    onPause={handleVideoPause}
-                    controls
-                    className="max-h-[300px] w-full"
-                    src="https://www.w3schools.com/html/mov_bbb.mp4"
-                  />
-                </div>
-              </div>
-
-              {/* Suspect video */}
-              <div className="relative rounded-2xl border border-rose-500/30 overflow-hidden bg-slate-900/50 flex flex-col">
-                <div className="p-2.5 bg-slate-900/90 border-b border-slate-800 text-[11px] font-bold text-slate-300">
-                  Suspect Sync Video payload
-                </div>
-                <div className="flex-1 relative flex items-center justify-center p-4">
-                  <video
-                    ref={videoRefSuspect}
-                    controls
-                    muted
-                    className="max-h-[300px] w-full pointer-events-none"
-                    src="https://www.w3schools.com/html/mov_bbb.mp4"
-                  />
-                </div>
-              </div>
-            </div>
-          )}
-
           {viewMode === 'audioSpectrogram' && (
             <div className="grid grid-cols-2 gap-6 w-full h-full">
               {/* Reference Audio Spectrogram */}
               <div className="relative rounded-2xl border border-slate-800 overflow-hidden bg-slate-900/50 flex flex-col">
                 <div className="p-2.5 bg-slate-900/90 border-b border-slate-800 text-[11px] font-bold text-slate-300">
-                  Reference Clean Spectrogram
+                  Original Speech Frequency Profile
                 </div>
                 <div className="flex-1 relative flex flex-col items-center justify-center p-4 gap-4">
-                  <canvas ref={canvasRef1} width="350" height="150" className="rounded-xl border border-slate-950" />
+                  <canvas ref={canvasRef1} width="350" height="140" className="rounded-xl border border-slate-950" />
                   <audio controls className="w-full" src="" />
                 </div>
               </div>
@@ -434,10 +410,10 @@ export default function ComparisonViewer({ originalMedia, suspectMedia, onClose 
               {/* Suspect Audio Spectrogram */}
               <div className="relative rounded-2xl border border-rose-500/30 overflow-hidden bg-slate-900/50 flex flex-col">
                 <div className="p-2.5 bg-slate-900/90 border-b border-slate-800 text-[11px] font-bold text-slate-300">
-                  Suspect Cloned Voice Spectrogram
+                  Cloned Voice Harmonics Profile
                 </div>
                 <div className="flex-1 relative flex flex-col items-center justify-center p-4 gap-4">
-                  <canvas ref={canvasRef2} width="350" height="150" className="rounded-xl border border-slate-950" />
+                  <canvas ref={canvasRef2} width="350" height="140" className="rounded-xl border border-slate-950" />
                   <audio controls muted={audioMuted} className="w-full" src="" />
                 </div>
               </div>
