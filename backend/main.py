@@ -45,46 +45,39 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:  # noqa: ARG001
     configure_logging()
     log.info("deepguard.startup", env=settings.APP_ENV, debug=settings.DEBUG)
 
-    # Database tables should be initialized via Alembic migrations or init_db.py, not here.
-    if settings.DEBUG:
-        log.info("deepguard.db.tables_check_skipped")
-        
-    # Seed default Admin and Standard User credentials with retry backoff
-    from app.db.init_db import init_db
     import asyncio
-    
-    max_retries = 5
-    db_initialized = False
-    for attempt in range(max_retries):
-        try:
-            await init_db()
-            log.info("deepguard.db.init_success")
-            db_initialized = True
-            break
-        except Exception as exc:
-            log.warning("deepguard.db.init_failed", attempt=attempt+1, error=str(exc))
-            if attempt == max_retries - 1:
-                log.error("deepguard.db.init_fatal", error=str(exc))
-            await asyncio.sleep(2 ** attempt)
 
-    # Trigger background model preloading if DB initialized successfully
-    if db_initialized:
-        async def preload_models():
+    async def _async_background_startup():
+        """Non-blocking background DB seeding & lazy ML model pre-warming."""
+        from app.db.init_db import init_db
+        max_retries = 3
+        db_initialized = False
+        for attempt in range(max_retries):
+            try:
+                await init_db()
+                log.info("deepguard.db.init_success")
+                db_initialized = True
+                break
+            except Exception as exc:
+                log.warning("deepguard.db.init_failed", attempt=attempt+1, error=str(exc))
+                await asyncio.sleep(1)
+
+        if db_initialized:
             try:
                 log.info("deepguard.models.preloading_start")
                 from app.ml_models import get_vision_model
                 from app.services.audio_engine import _get_audio_models
-                
-                loop = asyncio.get_event_loop()
+                loop = asyncio.get_running_loop()
                 await loop.run_in_executor(None, get_vision_model)
                 await loop.run_in_executor(None, _get_audio_models)
                 log.info("deepguard.models.preloading_complete")
             except Exception as exc:
                 log.warning("deepguard.models.preloading_failed", error=str(exc))
 
-        asyncio.create_task(preload_models())
+    # Dispatch non-blocking startup background task so HTTP probes return instantly
+    asyncio.create_task(_async_background_startup())
 
-    yield  # ← server is running
+    yield  # ← server starts serving HTTP requests instantly
 
     log.info("deepguard.shutdown")
     await engine.dispose()
