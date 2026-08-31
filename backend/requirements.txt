@@ -33,6 +33,7 @@ email-validator==2.2.0
 # torchvision==0.18.0
 numpy>=2.3.4
 albumentations==1.4.0
+google-genai>=2.20.0
 
 # ─── Computer Vision ──────────────────────────────────────────────────────────
 opencv-python-headless==4.10.0.84

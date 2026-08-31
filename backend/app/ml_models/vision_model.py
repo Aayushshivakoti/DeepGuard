@@ -290,6 +290,10 @@ class DeepfakeVisionModel:
                 )
                 # Blend main model score with router ensemble (simple average)
                 final_prob = (deepfake_prob + weighted_router) / 2.0
+                # Guard against NaN propagation from any sub-model
+                if np.isnan(final_prob) or np.isinf(final_prob):
+                    log.warning("vision_model.nan_final_prob_guarded", deepfake_prob=deepfake_prob, router=weighted_router)
+                    final_prob = 0.0
                 return final_prob, logits
 
         return self._mock_predict(image_buffer)
@@ -389,6 +393,10 @@ class DeepfakeVisionModel:
         # Use configurable class index for deepfake probability
         idx = settings.DEEPFAKE_CLASS_INDEX if hasattr(settings, "DEEPFAKE_CLASS_INDEX") else 1
         deepfake_prob = float(probs[idx]) * 100.0
+        # Guard against NaN/Inf from degenerate inputs (e.g., 1x1 images)
+        if np.isnan(deepfake_prob) or np.isinf(deepfake_prob):
+            log.warning("vision_model.nan_probability_guarded", logits=logits.tolist())
+            deepfake_prob = 0.0
         return deepfake_prob, logits
 
     def _mock_predict(self, image_buffer: bytes) -> Tuple[float, np.ndarray]:

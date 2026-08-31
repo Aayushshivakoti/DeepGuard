@@ -65,6 +65,9 @@ async def db_session(test_engine) -> AsyncGenerator[AsyncSession, None]:
 @pytest_asyncio.fixture
 async def app(db_session: AsyncSession) -> FastAPI:
     """Create test FastAPI app with overridden DB dependency."""
+    from app.core.config import settings
+    settings.RATE_LIMIT_ENABLED = False
+    settings.USE_MOCK_MODELS = True
     application = create_application()
 
     async def override_get_db():

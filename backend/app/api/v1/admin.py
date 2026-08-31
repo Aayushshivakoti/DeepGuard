@@ -818,7 +818,6 @@ async def get_model_telemetry(
     db: AsyncSession = Depends(get_db),
 ):
     from app.core.config import settings
-    import psutil
     import os
 
     try:
@@ -829,16 +828,20 @@ async def get_model_telemetry(
     except Exception:
         today_count = 0
 
+    cpu_usage = 12.5
+    ram_mb = 128.5
     try:
+        import psutil
         process = psutil.Process(os.getpid())
         ram_mb = process.memory_info().rss / (1024 * 1024)
+        cpu_usage = psutil.cpu_percent(interval=None) or 12.5
     except Exception:
-        ram_mb = 128.5
+        pass
 
     return {
         "gpu_allocated_mb": 0.0 if settings.USE_MOCK_MODELS else 256.4,
         "gpu_max_allocated_mb": 4096.0,
-        "cpu_usage_percent": psutil.cpu_percent(interval=None) or 12.5,
+        "cpu_usage_percent": cpu_usage,
         "ram_allocated_mb": round(ram_mb, 1),
         "active_model_state": "Fallback (Mock Heuristics)" if settings.USE_MOCK_MODELS else "PyTorch (DeepGuard-v3.1)",
         "average_latency_ms": 320.0,

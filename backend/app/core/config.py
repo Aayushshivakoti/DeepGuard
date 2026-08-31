@@ -64,7 +64,7 @@ class Settings(BaseSettings):
     SPATIAL_MODEL_PATH: str = "weights/efficientnet_b4_deepfake.pt"
     AUDIO_MODEL_PATH: str = "weights/voice_clone_detector.pt"
     TEXT_MODEL_PATH: str = "gpt2"
-    USE_MOCK_MODELS: bool = True
+    USE_MOCK_MODELS: bool = False
     # Paths to optional sub-models for generator routing (empty if not used)
     SUBMODEL_FLUX_PATH: str = ""
     SUBMODEL_GRID_PATH: str = ""
@@ -79,6 +79,19 @@ class Settings(BaseSettings):
     GOOGLE_SAFE_BROWSING_KEY: str = ""
     EXTERNAL_API_URL: str = ""
     EXTERNAL_API_KEY: str = ""
+
+    # External AI Providers (Gemini, ZeroGPT, HuggingFace)
+    GEMINI_API_KEY: str = ""
+    GEMINI_MODEL_VERSION: str = "gemini-2.5-flash"
+    ZEROGPT_API_KEY: str = ""
+    HUGGINGFACE_API_KEY: str = ""
+    HUGGINGFACE_MODEL_ENDPOINT: str = "https://api-inference.huggingface.co/models/umm-maybe/AI-image-detector"
+    EXTERNAL_API_TIMEOUT_SEC: float = 5.0
+
+    # Confidence thresholds
+    DEEPFAKE_CONFIDENCE_THRESHOLD: float = 80.0
+    AMBIGUOUS_LOW: float = 35.0
+    AMBIGUOUS_HIGH: float = 70.0
 
     # ── OAuth & WebAuthn SSO ──────────────────────────────────────────────────
     GOOGLE_CLIENT_ID: str = ""

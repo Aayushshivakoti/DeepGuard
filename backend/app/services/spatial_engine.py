@@ -22,6 +22,14 @@ from dataclasses import dataclass, field
 from typing import List, Optional, Tuple
 
 import cv2
+
+# Safe fallback for missing CascadeClassifier (e.g., when using opencv-python-headless)
+if not hasattr(cv2, "CascadeClassifier"):
+    class _DummyCascade:
+        def detectMultiScale(self, *args, **kwargs):
+            return []
+    cv2.CascadeClassifier = lambda *args, **kwargs: _DummyCascade()
+
 import numpy as np
 import structlog
 from PIL import Image
@@ -338,19 +346,19 @@ def _dct_anomaly_score(pil_img: Image.Image) -> float:
 
 def _detect_copy_move(pil_img: Image.Image) -> Tuple[float, int]:
     """
-    Detect copy-move forgery within the image using ORB descriptors.
+    Detect copy-move forgery within the image using SIFT descriptors.
     Matches keypoints with high spatial distance but high descriptor similarity.
     Returns (copy_move_score 0-1, match_count).
     """
     try:
         gray = np.array(pil_img.convert("L"))
-        orb = cv2.ORB_create(nfeatures=1000)
-        kp, des = orb.detectAndCompute(gray, None)
+        sift = cv2.SIFT_create()
+        kp, des = sift.detectAndCompute(gray, None)
         if des is None or len(des) < 10:
             return 0.0, 0
         
         from cv2 import BFMatcher
-        bf = BFMatcher(cv2.NORM_HAMMING, crossCheck=False)
+        bf = BFMatcher(cv2.NORM_L2, crossCheck=False)
         matches = bf.knnMatch(des, des, k=3)
         
         suspicious_matches = 0
@@ -358,7 +366,7 @@ def _detect_copy_move(pil_img: Image.Image) -> Tuple[float, int]:
             if len(m) < 3:
                 continue
             for match in m[1:3]:
-                if match.distance < 45.0:
+                if match.distance < 250.0:
                     pt1 = kp[match.queryIdx].pt
                     pt2 = kp[match.trainIdx].pt
                     dist = np.sqrt((pt1[0] - pt2[0])**2 + (pt1[1] - pt2[1])**2)
@@ -378,6 +386,9 @@ def _calculate_dire_score(pil_img: Image.Image) -> float:
     Measures structural differences under mild diffusion-style noise reconstruction.
     """
     try:
+        w, h = pil_img.size
+        if w < 32 or h < 32:
+            return 0.0
         gray = np.array(pil_img.convert("L"), dtype=np.float32) / 255.0
         noise = np.random.normal(0, 0.05, gray.shape).astype(np.float32)
         noisy = np.clip(gray + noise, 0.0, 1.0)

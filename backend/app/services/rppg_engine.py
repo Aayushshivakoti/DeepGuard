@@ -6,6 +6,13 @@ generates a biological anomaly penalty score.
 """
 from __future__ import annotations
 import cv2
+
+# Safe fallback for missing CascadeClassifier (e.g., when using opencv-python-headless)
+if not hasattr(cv2, "CascadeClassifier"):
+    class _DummyCascade:
+        def detectMultiScale(self, *args, **kwargs):
+            return []
+    cv2.CascadeClassifier = lambda *args, **kwargs: _DummyCascade()
 import numpy as np
 import os
 from typing import List, Tuple, Optional

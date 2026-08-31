@@ -8,6 +8,13 @@ from __future__ import annotations
 import os
 import tempfile
 import cv2
+
+# Safe fallback for missing CascadeClassifier (e.g., when using opencv-python-headless)
+if not hasattr(cv2, "CascadeClassifier"):
+    class _DummyCascade:
+        def detectMultiScale(self, *args, **kwargs):
+            return []
+    cv2.CascadeClassifier = lambda *args, **kwargs: _DummyCascade()
 import numpy as np
 from typing import List, Tuple, Dict, Any, Optional
 import structlog

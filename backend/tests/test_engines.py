@@ -9,6 +9,9 @@ import numpy as np
 from PIL import Image
 
 
+from app.core.config import settings
+settings.USE_MOCK_MODELS = True
+
 pytestmark = pytest.mark.asyncio
 
 
@@ -74,7 +77,45 @@ class TestSpatialEngine:
         out = apply_adversarial_defense(sample_jpeg_bytes, force=False)
         assert len(out) == len(sample_jpeg_bytes) # Should be completely unmodified
 
-    async def test_enterprise_routing_flux_zero_day(self, sample_jpeg_bytes: bytes):
+    async def test_enterprise_routing_flux_zero_day(self, sample_jpeg_bytes: bytes, monkeypatch):
+        from app.core.config import settings
+        monkeypatch.setattr(settings, "EXTERNAL_API_URL", "http://mock-enterprise-api")
+        monkeypatch.setattr(settings, "EXTERNAL_API_KEY", "mock-key")
+
+        import httpx
+        class MockResponse:
+            def __init__(self, json_data, status_code=200):
+                self.json_data = json_data
+                self.status_code = status_code
+            def json(self):
+                return self.json_data
+            def raise_for_status(self):
+                pass
+
+        async def mock_post(*args, **kwargs):
+            return MockResponse({"score": 95.0})
+
+        monkeypatch.setattr(httpx.AsyncClient, "post", mock_post)
+
+        # Mock local engines to return high confidence
+        from app.services import orchestrator
+        async def mock_analyze_image(buf):
+            from app.services.spatial_engine import ImageAnalysisResult
+            return ImageAnalysisResult(
+                confidence=85.0,
+                verdict="DEEPFAKE_DETECTED",
+                face_count=1,
+            )
+        monkeypatch.setattr(orchestrator, "analyze_image", mock_analyze_image)
+
+        class MockVisionModel:
+            def predict(self, buf):
+                return 85.0, None
+            def generate_gradcam(self, buf):
+                return None
+
+        monkeypatch.setattr(orchestrator, "get_vision_model", lambda: MockVisionModel())
+
         from app.services.orchestrator import dispatch_file_scan
         res = await dispatch_file_scan(sample_jpeg_bytes, filename="flux_synthetic.jpg", mime_type="image/jpeg")
         assert res.verdict == "DEEPFAKE_DETECTED"

@@ -136,7 +136,7 @@ class TestUrlScanEndpoint:
     async def test_ip_url_flagged(self, client: AsyncClient):
         response = await client.post(
             "/api/v1/scan/url",
-            json={"url": "http://192.168.1.1/login"},
+            json={"url": "http://93.184.216.34/login"},
         )
         assert response.status_code == 200
         data = response.json()

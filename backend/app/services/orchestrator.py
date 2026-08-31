@@ -13,6 +13,8 @@ Integrates real ML models:
 """
 from __future__ import annotations
 
+from app.core.config import settings
+
 import time
 import uuid
 from app.db.session import AsyncSessionLocal
@@ -21,6 +23,8 @@ from typing import Optional
 
 import structlog
 import anyio
+
+import asyncio
 
 from app.schemas.scan import ForensicFlag, VerificationResponse, VerdictType
 from app.services.phishing_engine import (
@@ -44,6 +48,9 @@ from app.ml_models import (
 )
 from app.services.email_parser_service import analyze_email
 from app.services.pdf_forensic_service import analyze_pdf_forensics
+from app.services.gemini_client import gemini_client
+from app.services.zerogpt_client import zerogpt_client
+from app.services.huggingface_client import huggingface_client
 
 log = structlog.get_logger(__name__)
 
@@ -178,25 +185,75 @@ async def dispatch_file_scan(
         else:
             metadata_score = 5.0
         
-        # Aggregate scores (ensemble: heuristic, real ML model probability, metadata)
+        # Query Gemini and HuggingFace API clients concurrently with strict timeout controls
+        try:
+            gemini_res, hf_res = await asyncio.gather(
+                asyncio.wait_for(
+                    gemini_client.analyze_multimodal_media(buffer, mime_type),
+                    timeout=settings.EXTERNAL_API_TIMEOUT_SEC + 1.0,
+                ),
+                asyncio.wait_for(
+                    huggingface_client.classify_image_deepfake(buffer),
+                    timeout=settings.EXTERNAL_API_TIMEOUT_SEC + 1.0,
+                ),
+                return_exceptions=True,
+            )
+        except Exception as exc:
+            log.warning("orchestrator.external_api_gather_failed", error=str(exc))
+            gemini_res, hf_res = {}, {}
+
+        gemini_score = None
+        if isinstance(gemini_res, dict) and gemini_res.get("available"):
+            gemini_score = gemini_res.get("score", 0.0) * 100.0
+            if gemini_res.get("flags"):
+                for flag_desc in gemini_res["flags"]:
+                    result.flags.append(ForensicFlag(
+                        label="Gemini Multimodal Anomaly",
+                        severity="high" if gemini_score >= 70 else "medium",
+                        description=str(flag_desc),
+                    ))
+
+        hf_score = None
+        if isinstance(hf_res, dict) and hf_res.get("available"):
+            hf_score = hf_res.get("score", 0.0) * 100.0
+            if hf_score >= 70.0:
+                result.flags.append(ForensicFlag(
+                    label="HuggingFace ViT Flag",
+                    severity="high",
+                    description=f"HuggingFace vision transformer detected deepfake signature: {hf_res.get('top_label')}.",
+                ))
+
+        # Aggregate scores (ensemble: heuristic, real ML model probability, metadata, external APIs)
         combined_vision_score = (result.confidence + model_prob) / 2.0
+        # Guard: if either sub-score was NaN (e.g., degenerate input), fall back to 0
+        import math
+        if math.isnan(combined_vision_score) or math.isinf(combined_vision_score):
+            log.warning("orchestrator.nan_vision_score_guarded", spatial=result.confidence, model=model_prob)
+            combined_vision_score = 0.0
         
         final_score, weights = aggregate_scores(
             spatial_score=combined_vision_score,
             temporal_score=0.0,
             audio_score=0.0,
             metadata_score=metadata_score,
-            channels=["image"]
+            channels=["image"],
+            gemini_score=gemini_score,
+            huggingface_score=hf_score,
         )
         
         # Hybrid Enterprise API routing logic
-        is_ambiguous = 35.0 <= final_score <= 70.0
+        is_ambiguous = settings.AMBIGUOUS_LOW <= final_score <= settings.AMBIGUOUS_HIGH
         is_zero_day = gan_result.get("is_synthetic") or "synthetic" in filename.lower() or "flux" in filename.lower() or "sd3" in filename.lower()
         
         external_score = None
         if is_ambiguous or is_zero_day:
             log.info("orchestrator.routing_to_external_enterprise_api", score=final_score, is_zero_day=is_zero_day)
-            external_score = await query_external_api(buffer, filename)
+            try:
+                external_score = await query_external_api(buffer, filename)
+            except Exception as exc:
+                log.error("orchestrator.external_api_failed", error=str(exc))
+                # Fallback: treat as low confidence external score (e.g., 50.0)
+                external_score = 50.0
             # Aggregate: 70% weight to external enterprise API, 30% to local ensemble
             final_score = 0.7 * external_score + 0.3 * final_score
             result.flags.append(ForensicFlag(
@@ -205,9 +262,9 @@ async def dispatch_file_scan(
                 description=f"Ambiguous local score or zero-day features triggered external enterprise API audit. Remote risk score: {external_score:.1f}%."
             ))
 
-        if final_score >= 70:
+        if final_score >= settings.DEEPFAKE_CONFIDENCE_THRESHOLD:
             verdict = "DEEPFAKE_DETECTED"
-        elif final_score >= 40:
+        elif final_score >= settings.AMBIGUOUS_LOW:
             verdict = "SUSPICIOUS"
         else:
             verdict = "AUTHENTIC"
@@ -226,6 +283,8 @@ async def dispatch_file_scan(
                 "gan_fingerprint": gan_result,
                 "vision_model_probability": round(model_prob, 2),
                 "ensemble_weights": weights,
+                "gemini_analysis": gemini_res if isinstance(gemini_res, dict) else {},
+                "huggingface_analysis": hf_res if isinstance(hf_res, dict) else {},
                 "external_enterprise_score": external_score,
             },
             processing_time_ms=int((time.perf_counter() - t_start) * 1000),
@@ -243,16 +302,43 @@ async def dispatch_file_scan(
 
     elif engine_type == "audio":
         audio_ext = ext or filename.rsplit(".", 1)[-1] if "." in filename else "wav"
+        mime_type = f"audio/{audio_ext}"
+        
+        # Concurrently query Gemini multimodal API if configured
+        try:
+            gemini_res = await asyncio.wait_for(
+                gemini_client.analyze_multimodal_media(buffer, mime_type),
+                timeout=settings.EXTERNAL_API_TIMEOUT_SEC + 1.0,
+            )
+        except Exception as exc:
+            log.warning("orchestrator.audio_gemini_api_failed", error=str(exc))
+            gemini_res = {}
+
         result = await analyze_audio(buffer, ext=audio_ext)
         
         # Run real voice clone detector
         audio_model = get_audio_model()
         model_prob, _ = await anyio.to_thread.run_sync(audio_model.predict, buffer, audio_ext)
 
+        gemini_score = None
+        if isinstance(gemini_res, dict) and gemini_res.get("available"):
+            gemini_score = gemini_res.get("score", 0.0) * 100.0
+            if gemini_res.get("flags"):
+                for flag_desc in gemini_res["flags"]:
+                    result.flags.append(ForensicFlag(
+                        label="Gemini Audio Anomaly",
+                        severity="high" if gemini_score >= 70 else "medium",
+                        description=str(flag_desc),
+                    ))
+
+        audio_calc_score = (result.confidence + model_prob) / 2.0
+        if gemini_score is not None:
+            audio_calc_score = 0.6 * audio_calc_score + 0.4 * gemini_score
+
         final_score, weights = aggregate_scores(
             spatial_score=0.0,
             temporal_score=0.0,
-            audio_score=(result.confidence + model_prob) / 2.0,
+            audio_score=audio_calc_score,
             metadata_score=0.0,
             channels=["audio"]
         )
@@ -273,6 +359,7 @@ async def dispatch_file_scan(
                 **result.engine_metadata,
                 **result.spectrogram_metadata,
                 "voice_clone_probability": round(model_prob, 2),
+                "gemini_analysis": gemini_res if isinstance(gemini_res, dict) else {},
                 "ensemble_weights": weights,
             },
             processing_time_ms=int((time.perf_counter() - t_start) * 1000),
@@ -282,11 +369,34 @@ async def dispatch_file_scan(
         )
 
     elif engine_type == "video":
+        video_ext = ext or filename.rsplit(".", 1)[-1] if "." in filename else "mp4"
+        mime_type = f"video/{video_ext}"
+
+        try:
+            gemini_res = await asyncio.wait_for(
+                gemini_client.analyze_multimodal_media(buffer, mime_type),
+                timeout=settings.EXTERNAL_API_TIMEOUT_SEC + 1.0,
+            )
+        except Exception as exc:
+            log.warning("orchestrator.video_gemini_api_failed", error=str(exc))
+            gemini_res = {}
+
         result = await analyze_video(buffer)
         spatial_score = result.engine_metadata.get("mean_frame_score", result.confidence)
         temporal_score = getattr(result, "rppg_anomaly_score", 0.0) * 100.0
         audio_score = getattr(result, "lip_sync_score", 0.0) * 100.0
-        
+
+        gemini_score = None
+        if isinstance(gemini_res, dict) and gemini_res.get("available"):
+            gemini_score = gemini_res.get("score", 0.0) * 100.0
+            if gemini_res.get("flags"):
+                for flag_desc in gemini_res["flags"]:
+                    result.flags.append(ForensicFlag(
+                        label="Gemini Video Anomaly",
+                        severity="high" if gemini_score >= 70 else "medium",
+                        description=str(flag_desc),
+                    ))
+
         # Audio-visual consistency checker
         cross_modal = get_cross_modal_checker()
         # Simulated/cached audio extracted from video
@@ -305,6 +415,9 @@ async def dispatch_file_scan(
             metadata_score=0.0,
             channels=["video"]
         )
+        if gemini_score is not None:
+            final_score = 0.7 * final_score + 0.3 * gemini_score
+
         if final_score >= 65:
             verdict = "DEEPFAKE_DETECTED"
         elif final_score >= 35:
@@ -321,6 +434,7 @@ async def dispatch_file_scan(
             engine_metadata={
                 **result.engine_metadata,
                 "cross_modal_consistency": cross_modal_res,
+                "gemini_analysis": gemini_res if isinstance(gemini_res, dict) else {},
                 "ensemble_weights": weights,
                 "rppg_waveform": getattr(result, "rppg_waveform", []),
             },
@@ -419,6 +533,23 @@ async def dispatch_file_scan(
         text_str = buffer.decode("utf-8", errors="replace")
         text_res = await anyio.to_thread.run_sync(get_text_detector().analyze, text_str)
         
+        # Concurrently query ZeroGPT and Gemini text API clients with strict timeout controls
+        try:
+            zerogpt_res, gemini_text_res = await asyncio.gather(
+                asyncio.wait_for(
+                    zerogpt_client.detect_ai_text(text_str),
+                    timeout=settings.EXTERNAL_API_TIMEOUT_SEC + 1.0,
+                ),
+                asyncio.wait_for(
+                    gemini_client.analyze_text_content(text_str),
+                    timeout=settings.EXTERNAL_API_TIMEOUT_SEC + 1.0,
+                ),
+                return_exceptions=True,
+            )
+        except Exception as exc:
+            log.warning("orchestrator.text_external_api_gather_failed", error=str(exc))
+            zerogpt_res, gemini_text_res = {}, {}
+
         flags = []
         if text_res["verdict"] == "LIKELY_AI":
             flags.append(ForensicFlag(
@@ -426,25 +557,54 @@ async def dispatch_file_scan(
                 severity="high",
                 description=text_res["explanation"],
             ))
+
+        zerogpt_score = None
+        if isinstance(zerogpt_res, dict) and zerogpt_res.get("available"):
+            zerogpt_score = zerogpt_res.get("score", 0.0) * 100.0
+            if zerogpt_score >= 50.0:
+                flags.append(ForensicFlag(
+                    label="ZeroGPT AI Text Signature",
+                    severity="high" if zerogpt_score >= 75 else "medium",
+                    description=f"ZeroGPT detected {zerogpt_res.get('fake_percentage', 0.0):.1f}% AI generation probability.",
+                ))
+
+        gemini_text_score = None
+        if isinstance(gemini_text_res, dict) and gemini_text_res.get("available"):
+            gemini_text_score = gemini_text_res.get("ai_text_score", 0.0) * 100.0
+            if gemini_text_res.get("flags"):
+                for f_desc in gemini_text_res["flags"]:
+                    flags.append(ForensicFlag(
+                        label="Gemini Text Finding",
+                        severity="high" if gemini_text_score >= 70 else "medium",
+                        description=str(f_desc),
+                    ))
+
+        # Blend scores
+        combined_scores = [text_res["ai_probability"]]
+        if zerogpt_score is not None:
+            combined_scores.append(zerogpt_score)
+        if gemini_text_score is not None:
+            combined_scores.append(gemini_text_score)
+
+        final_ai_score = float(sum(combined_scores) / len(combined_scores))
+
+        if final_ai_score >= 65:
             verdict = "DEEPFAKE_DETECTED"
-        elif text_res["verdict"] == "MIXED":
-            flags.append(ForensicFlag(
-                label="Mixed Text Style",
-                severity="medium",
-                description=text_res["explanation"],
-            ))
+        elif final_ai_score >= 35:
             verdict = "SUSPICIOUS"
         else:
             verdict = "AUTHENTIC"
 
         return _build_response(
             verdict=verdict,
-            confidence=text_res["ai_probability"],
+            confidence=final_ai_score,
             media_type="pdf",  # Map to Document section
             filename=filename,
             flags=flags,
             engine_metadata={
                 "text_detector": text_res,
+                "zerogpt_analysis": zerogpt_res if isinstance(zerogpt_res, dict) else {},
+                "gemini_text_analysis": gemini_text_res if isinstance(gemini_text_res, dict) else {},
             },
             processing_time_ms=int((time.perf_counter() - t_start) * 1000),
             spatial_confidence=None,
@@ -522,17 +682,20 @@ async def dispatch_url_scan(url: str) -> VerificationResponse:
 
     # Log medium‑confidence scans (40‑60) for active learning
     if 40.0 <= final_score <= 60.0:
-        from app.db.models.retrain_queue import RetrainQueue
-        from app.db.database import AsyncSessionLocal
-        async with AsyncSessionLocal() as db:
-            entry = RetrainQueue(
-                scan_id=str(uuid.uuid4()),
-                media_path=url,
-                initial_risk_score=final_score,
-                confidence_band="medium",
-            )
-            db.add(entry)
-            await db.commit()
+        try:
+            from app.db.models.retrain_queue import RetrainQueue
+            from app.db.session import AsyncSessionLocal
+            async with AsyncSessionLocal() as db:
+                entry = RetrainQueue(
+                    scan_id=str(uuid.uuid4()),
+                    media_path=url,
+                    initial_risk_score=final_score,
+                    confidence_band="medium",
+                )
+                db.add(entry)
+                await db.commit()
+        except Exception as exc:
+            log.warning("orchestrator.active_learning_retrain_queue_failed", error=str(exc))
 
     return _build_response(
         verdict=verdict,
@@ -572,6 +735,11 @@ def _build_response(
 ) -> VerificationResponse:
     """Build a standardised VerificationResponse."""
     meta = engine_metadata or {}
+    # Defense-in-depth: sanitize NaN/Inf confidence from any engine before Pydantic validation
+    import math
+    if math.isnan(confidence) or math.isinf(confidence):
+        log.warning("orchestrator.nan_confidence_sanitized", raw=confidence)
+        confidence = 0.0
     simple_summary = generate_simple_summary(
         media_type=media_type,
         verdict=verdict,

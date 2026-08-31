@@ -30,3 +30,8 @@ backend/venv/
 !.vscode/extensions.json
 .idea
 *.sw?
+
+# Uploads & Temp DB Journal
+uploads/
+*.sqlite-journal
+
