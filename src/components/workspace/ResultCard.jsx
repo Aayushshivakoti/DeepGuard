@@ -497,38 +497,70 @@ export default function ResultCard({ result, onReset, isMock }) {
 
               <div className="space-y-6">
                 {/* Heatmap overlay section */}
+                {/* Suspicious Area Heatmap (Grad-CAM) */}
                 <div>
-                  <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-2 flex items-center gap-1.5">
-                    <Layers size={13} className="text-purple-400" />
-                    Grad-CAM Spectral Heatmap
-                  </h4>
+                  <div className="flex items-center justify-between mb-2">
+                    <h4 className="text-xs font-bold uppercase tracking-wider text-slate-200 flex items-center gap-1.5">
+                      <Layers size={13} className="text-purple-400" />
+                      Suspicious Area Heatmap (AI Focus Areas)
+                    </h4>
+                    <span className="text-[10px] text-purple-300 font-mono bg-purple-500/10 px-2 py-0.5 rounded border border-purple-500/20">
+                      Grad-CAM Neural Map
+                    </span>
+                  </div>
+
                   {result.heatmap_b64 ? (
-                    <div className="relative rounded-xl overflow-hidden border border-slate-800 bg-slate-950 p-2">
-                      <img src={result.heatmap_b64} alt="Forensic Heatmap" className="w-full max-h-48 object-contain rounded-lg" />
-                      <p className="text-[10px] text-slate-500 text-center mt-2 font-mono">Heatmap represents regions of highest frequency variance</p>
+                    <div className="relative rounded-xl overflow-hidden border border-slate-800 bg-slate-950 p-2.5 space-y-2">
+                      <img src={result.heatmap_b64} alt="Suspicious Area Heatmap" className="w-full max-h-48 object-contain rounded-lg" />
+                      
+                      {/* Visual Color Legend */}
+                      <div className="flex items-center justify-between text-[10px] text-slate-400 bg-slate-900/60 p-2 rounded-lg border border-slate-800/60">
+                        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-rose-500" /> Red/Warm = Artificial Zone</span>
+                        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-blue-500" /> Blue/Dark = Natural Texture</span>
+                      </div>
+
+                      {/* Plain-English Explanation Card */}
+                      <p className="text-[11px] text-slate-300 leading-relaxed bg-slate-900/40 p-2 rounded-lg border border-slate-800/40">
+                        <strong className="text-cyan-400">What this means: </strong> 
+                        This heatmap highlights where our AI detected unnatural facial surface smoothing, distorted lighting, or synthetic face-swap boundaries.
+                      </p>
                     </div>
                   ) : (
                     <div className="bg-slate-900/40 border border-slate-900 p-4 rounded-xl text-center text-xs text-slate-500">
-                      Grad-CAM Heatmap overlay not available for this media type.
+                      Heatmap overlay not available for this media type.
                     </div>
                   )}
                 </div>
 
-                {/* FFT Spectrum Graph */}
+                {/* AI Grid Fingerprint Scanner (FFT Spectrum) */}
                 <div>
-                  <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-3 flex items-center gap-1.5">
-                    <Microscope size={13} className="text-cyan-400" />
-                    FFT High-Frequency Noise Spectrum
-                  </h4>
-                  <div className="h-44 w-full bg-slate-950/65 border border-slate-900 rounded-xl p-3">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={(result.fft_spectral_noise || [0.12, 0.18, 0.25, 0.55, 0.85, 0.44, 0.23, 0.15, 0.08, 0.04]).map((val, i) => ({ bin: `Bin ${i+1}`, Anomaly: val * 100 }))}>
-                        <XAxis dataKey="bin" stroke="#475569" fontSize={8} />
-                        <YAxis stroke="#475569" fontSize={8} unit="%" />
-                        <Tooltip contentStyle={{ background: '#090d16', border: '1px solid #1e293b', borderRadius: '8px', fontSize: '10px' }} />
-                        <Bar dataKey="Anomaly" fill="#06b6d4" radius={[2, 2, 0, 0]} />
-                      </BarChart>
-                    </ResponsiveContainer>
+                  <div className="flex items-center justify-between mb-2">
+                    <h4 className="text-xs font-bold uppercase tracking-wider text-slate-200 flex items-center gap-1.5">
+                      <Microscope size={13} className="text-cyan-400" />
+                      AI Grid Fingerprint Scanner (High-Frequency Noise)
+                    </h4>
+                    <span className="text-[10px] text-cyan-300 font-mono bg-cyan-500/10 px-2 py-0.5 rounded border border-cyan-500/20">
+                      2D FFT Analysis
+                    </span>
+                  </div>
+
+                  <div className="bg-slate-950/65 border border-slate-900 rounded-xl p-3 space-y-2">
+                    <div className="h-36 w-full">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <BarChart data={(result.fft_spectral_noise || [0.12, 0.18, 0.25, 0.55, 0.85, 0.44, 0.23, 0.15, 0.08, 0.04]).map((val, i) => ({ bin: `Bin ${i+1}`, Anomaly: val * 100 }))}>
+                          <XAxis dataKey="bin" stroke="#475569" fontSize={8} />
+                          <YAxis stroke="#475569" fontSize={8} unit="%" />
+                          <Tooltip contentStyle={{ background: '#090d16', border: '1px solid #1e293b', borderRadius: '8px', fontSize: '10px' }} />
+                          <Bar dataKey="Anomaly" fill="#06b6d4" radius={[2, 2, 0, 0]} />
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
+
+                    {/* Plain-English Explanation Card */}
+                    <p className="text-[11px] text-slate-300 leading-relaxed bg-slate-900/40 p-2 rounded-lg border border-slate-800/40">
+                      <strong className="text-cyan-400">What this means: </strong>
+                      AI image generators leave hidden mathematical grid patterns in high frequencies (Bins 4–6). Spikes above 40% indicate non-camera synthesis.
+                    </p>
                   </div>
                 </div>
 
